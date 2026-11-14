@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -104,3 +105,17 @@ def test_directory_and_notion_review(tmp_path, monkeypatch):
     result = CliRunner().invoke(app, ["approve", pack_id])
     assert result.exit_code == 1 and "Notion" in result.output
     assert registry.get(pack_id)["approved_hash"] is None
+
+
+def test_directory_and_mixed_absolute_relative_files_deduplicate(tmp_path, monkeypatch):
+    directory = tmp_path / "docs"
+    directory.mkdir()
+    source = directory / "notes.md"
+    source.write_text("Safe battery specifications", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    sources = ui.source_inputs(files=[Path("docs"), source.resolve(), Path("docs/../docs/notes.md")])
+    assert len(sources) == 1
+    assert sources[0].value == str(source.resolve())
+    result = CliRunner().invoke(app, ["build", "--file", "docs", "--file", str(source.resolve()), "--offline"])
+    assert result.exit_code == 0, result.output
+    assert "Pack ID:" in result.output

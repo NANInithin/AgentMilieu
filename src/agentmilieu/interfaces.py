@@ -75,7 +75,7 @@ def source_inputs(urls=(), names=(), files=()):
             paths.append(path)
         else:
             raise ValueError(f"Source file does not exist: {path.name}")
-    sources += [SourceInput("file", str(path.resolve())) for path in dict.fromkeys(paths)]
+    sources += [SourceInput("file", str(path)) for path in dict.fromkeys(path.resolve() for path in paths)]
     if not sources:
         raise ValueError("Provide at least one URL, name/topic or supported file")
     return sources
