@@ -149,6 +149,64 @@ def mistral_summarise(records, purpose, max_tokens):
     return response.choices[0].message.content or ""
 
 
+def _link_end(text, start):
+    depth, quote, index = 1, None, start + 1
+    while index < len(text):
+        char = text[index]
+        if char == "\n":
+            return None
+        if char == "\\":
+            index += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'" and text[index - 1].isspace():
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _plain_markdown_links(text):
+    parts, cursor = [], 0
+    for match in re.finditer(r"\]\(", text):
+        if match.start() < cursor:
+            continue
+        end = _link_end(text, match.start() + 1)
+        if end is None:
+            continue
+        depth, start = 1, match.start() - 1
+        while start >= cursor and text[start] != "\n":
+            if start > 0 and text[start - 1] == "\\":
+                start -= 2
+                continue
+            if text[start] == "]":
+                depth += 1
+            elif text[start] == "[":
+                depth -= 1
+                if depth == 0:
+                    break
+            start -= 1
+        if depth == 0:
+            label = text[start + 1:match.start()]
+            if start > cursor and text[start - 1] == "!":
+                start -= 1
+            parts.extend([text[cursor:start], label])
+        elif text[match.start() + 2:].startswith(("https://", "http://")):
+            parts.append(text[cursor:match.start()])
+        else:
+            continue
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def _extractive_lines(sentence, citation, limit, counter):
     target = min(limit, max(32, min(256, limit // 8)))
     words = []
@@ -181,11 +239,7 @@ def _compress(records, purpose, limit, counter, summariser):
             sentence_groups.append([f'- {record["text"]} [{record["citation"]}]'])
             continue
         else:
-            text = re.sub(r"!?\[((?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]\((?:[^()]|\([^()]*\))*\)",
-                          lambda match: match.group(1), record["text"])
-            text = re.sub(r"\]\((?:[^()]|\([^()]*\))*\)", "", text)
-            text = re.sub(r"\]\(https?://[^\n]*$", "", text)
-            text = re.sub(r"^\s*(?:'[^'\n]*'|\"[^\"\n]*\")\)", "", text)
+            text = _plain_markdown_links(record["text"])
             sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
         sentences.sort(key=lambda sentence: -len(query & set(terms(sentence))))
         sentence_groups.append([line for sentence in sentences

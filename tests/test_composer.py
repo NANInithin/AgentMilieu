@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from agentmilieu import BudgetConfig, calculate_budget
-from agentmilieu.composer import ComposeOptions, compose, valid_fact_lines
+from agentmilieu.composer import ComposeOptions, _plain_markdown_links, compose, valid_fact_lines
 from agentmilieu.devices import DEVICE_PRESETS
 from agentmilieu.documents import Document
 from agentmilieu.models import MODEL_PRESETS
@@ -143,7 +143,8 @@ def test_link_heavy_static_knowledge_fills_available_budget(strategy):
                          options=ComposeOptions(strategy=strategy, use_mistral=False))
     assert .7 * pack.budget.knowledge_budget <= pack.token_accounting["knowledge"] <= pack.budget.knowledge_budget
     assert pack.token_accounting["total"] <= pack.budget.context_window
-    assert "https://" not in pack.knowledge and "Excavation title" not in pack.knowledge
+    assert "https://" not in _plain_markdown_links(texts[0])
+    assert any("Excavation report" in line and "https://" not in line for line in pack.knowledge.splitlines())
     assert any("https://" in record["text"] for record in pack.corpus)
     allowed = {record["citation"] for record in pack.corpus}
     assert len(valid_fact_lines(pack.knowledge, allowed)) == len(pack.knowledge.splitlines())
@@ -165,6 +166,34 @@ def test_explicit_rag_core_cap_remains_opt_in():
     pack = compose_texts(corpus(24), config=BudgetConfig(max_ctx=4096),
                          options=ComposeOptions(strategy="rag", core_tokens=128, use_mistral=False))
     assert 0 < pack.token_accounting["knowledge"] <= 128
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("[Pompeii](https://en.wikipedia.org/wiki/Foo_(bar_(baz)) 'title') more facts here [S1#c2]",
+     "Pompeii more facts here [S1#c2]"),
+    ("chunk end](https://example.org/Foo_(bar_(baz)) 'title') more facts here",
+     "chunk end more facts here"),
+    ("[Pompeii](https://example.org/Foo_(bar_(baz)) 'title (') more facts here",
+     "Pompeii more facts here"),
+    (r"[Pompeii](https://example.org/Foo_\(bar\) 'title') more facts here",
+     "Pompeii more facts here"),
+    ("[Pompeii](https://example.org/Foo_(bar_(baz)) 'title' more facts here [S1#c2]",
+     "[Pompeii](https://example.org/Foo_(bar_(baz)) 'title' more facts here [S1#c2]"),
+    ("[Pompeii](https://example.org 'unclosed title) more facts here",
+     "[Pompeii](https://example.org 'unclosed title) more facts here"),
+    ("", ""), ("No links. More facts here.", "No links. More facts here."),
+])
+def test_markdown_link_cleanup_preserves_following_facts(source, expected):
+    assert _plain_markdown_links(source) == expected
+
+
+@pytest.mark.parametrize("strategy", ["rag", "compress"])
+def test_nested_link_following_facts_survive_composition(strategy):
+    pack = compose_texts([("[Pompeii](https://en.wikipedia.org/wiki/Foo_(bar_(baz)) 'title') "
+                          "more facts here about public baths and paved streets")],
+                         options=ComposeOptions(strategy=strategy, use_mistral=False))
+    assert "Pompeii more facts here about public baths and paved streets" in pack.knowledge
+    assert pack.knowledge.endswith(f'[{pack.corpus[0]["citation"]}]')
 
 
 def test_retrieval_budget_math():
