@@ -131,9 +131,9 @@ def _load(path, n_ctx, gpu):
     devices = ["gpu", "cpu"] if use_gpu else ["cpu"]
     failures = []
     for device in devices:
-        key = (path, n_ctx, device)
-        if key in _MODELS:
-            return (*_MODELS[key], device)
+        for (cached_path, cached_ctx, cached_device), cached in _MODELS.items():
+            if cached_path == path and cached_device == device and cached_ctx >= n_ctx:
+                return (*cached, device)
     while _MODELS:
         _, (previous, _) = _MODELS.popitem()
         previous.close()
@@ -241,6 +241,7 @@ def compare_chat(repo, filename, *, n_ctx, with_system, without_system=NEUTRAL_P
                  ("without_context", without_system, without_history)]
         while True:
             model, formatter, device = _load(path, n_ctx, gpu)
+            n_ctx = model.n_ctx()
             try:
                 return _generate_pair(model, formatter, sides, n_ctx, device,
                                       temperature, max_tokens, top_p)

@@ -78,6 +78,7 @@ def runtime(monkeypatch, tmp_path, hub):
     class Model:
         def __init__(self, **kwargs):
             self.closed = False
+            self.context_size = kwargs["n_ctx"]
             self._model = SimpleNamespace(n_ctx_train=lambda: 24)
             self.metadata = {"tokenizer.chat_template": "template"}
             loads.append(kwargs)
@@ -86,6 +87,9 @@ def runtime(monkeypatch, tmp_path, hub):
 
         def close(self):
             self.closed = True
+
+        def n_ctx(self):
+            return self.context_size
 
         def detokenize(self, *args, **kwargs):
             return b""
@@ -160,6 +164,8 @@ def test_cache_evicts_previous_model(runtime):
     assert first.closed and not second.closed
     third, _, _ = llm._load("second", 2048, False)
     assert second.closed and not third.closed
+    assert llm._load("second", 1024, False)[0] is third
+    assert not third.closed
     assert len(llm._MODELS) == 1
 
 
@@ -255,6 +261,12 @@ def test_context_grows_to_fit_both_sides(runtime, monkeypatch, training, expecte
     assert [load["n_ctx"] for load in loads] == [1024, expected]
     assert models[0].closed and not models[1].closed
     assert result["with_context"] == result["without_context"] == "reply"
+    repeated = llm.compare_chat("repo", "small.gguf", n_ctx=1024, max_tokens=max_tokens, gpu=False,
+                                with_system="fact " * 1200, with_history=history,
+                                without_history=history)
+    assert repeated["metadata"]["n_ctx"] == expected
+    assert [load["n_ctx"] for load in loads] == [1024, expected]
+    assert not models[1].closed
 
 
 def test_context_cannot_grow_past_training(runtime):
