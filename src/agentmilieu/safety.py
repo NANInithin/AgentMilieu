@@ -66,11 +66,48 @@ def _luhn(text):
 
 
 def _iban(text):
-    compact = text.replace(" ", "").upper()
+    compact = "".join(text.split()).upper()
     if not 15 <= len(compact) <= 34:
         return False
     rearranged = compact[4:] + compact[:4]
     return int("".join(str(ord(c) - 55) if c.isalpha() else c for c in rearranged)) % 97 == 1
+
+
+# ISO 13616 national format lengths disambiguate checksum-valid partial prefixes and labels.
+IBAN_LENGTHS = {country: length for length, countries in {
+    15: "NO", 16: "BE", 18: "DK FO FI GL NL SD FK", 19: "MK SI",
+    20: "AT BA EE KZ XK LT LU MN", 21: "HR LV LI CH",
+    22: "BH BG CR GE DE IE ME RS GB VA", 23: "GI IL TL AE SO OM",
+    24: "AD CZ MD PK RO SA SE SK ES TN VG", 25: "PT ST LY", 26: "IS TR IQ",
+    27: "FR GR IT MC MR SM BI DJ", 28: "AL AZ BY CY DO GT HU LB PL SV NI HN",
+    29: "BR EG PS QA UA", 30: "JO KW MU YE", 31: "MT SC", 32: "LC", 33: "RU",
+}.items() for country in countries.split()}
+
+
+def _iban_spans(text):
+    tokens = list(re.finditer(r"[A-Za-z0-9]+", text))
+    index = 0
+    while index < len(tokens):
+        first = tokens[index].group().upper()
+        if not re.match(r"[A-Z]{2}\d{2}", first):
+            index += 1
+            continue
+        required = IBAN_LENGTHS.get(first[:2])
+        compact, longest = "", None
+        for end_index in range(index, len(tokens)):
+            token = tokens[end_index]
+            if end_index > index and not text[tokens[end_index - 1].end():token.start()].isspace():
+                break
+            compact += token.group().upper()
+            if len(compact) > (required or 34):
+                break
+            if (required is None or len(compact) == required) and _iban(compact):
+                longest = end_index
+        if longest is None:
+            index += 1
+        else:
+            yield tokens[index].start(), tokens[longest].end()
+            index = longest + 1
 
 
 def _entropy(text):
@@ -98,8 +135,17 @@ def _redactions(text, config):
     text = "".join(text[i] for i in positions)
     candidates = []
     allowed_ibans = {"".join(value.split()).upper() for value in config.allowlist}
+    allowed_spans = []
+    if config.enabled.get("IBAN", True):
+        priority = list(PATTERNS).index("IBAN")
+        for start, end in _iban_spans(text):
+            raw = text[start:end]
+            if "".join(raw.split()).upper() in allowed_ibans:
+                allowed_spans.append((start, end))
+            else:
+                candidates.append((priority, positions[start], positions[end - 1] + 1, "IBAN", raw))
     for priority, (kind, pattern) in enumerate(PATTERNS.items()):
-        if not config.enabled.get(kind, True):
+        if kind == "IBAN" or not config.enabled.get(kind, True):
             continue
         for match in re.finditer(pattern, text):
             raw = match.group()
@@ -109,18 +155,7 @@ def _redactions(text, config):
                 start, end = match.span(1)
                 if _entropy(raw) < 3.5:
                     continue
-            if kind == "IBAN":
-                prefixes = [i for i in range(15, len(raw) + 1)
-                            if i == len(raw) or raw[i] == " "]
-                valid_ends = [i for i in reversed(prefixes) if _iban(raw[:i])]
-                if not valid_ends:
-                    continue
-                valid_end = next((i for i in valid_ends
-                                  if "".join(raw[:i].split()).upper() in allowed_ibans), valid_ends[0])
-                raw, end = raw[:valid_end], start + valid_end
-                if "".join(raw.split()).upper() in allowed_ibans:
-                    continue
-            if raw in config.allowlist:
+            if raw in config.allowlist or any(left <= start and end <= right for left, right in allowed_spans):
                 continue
             if kind == "CREDIT_CARD" and not _luhn(raw):
                 continue

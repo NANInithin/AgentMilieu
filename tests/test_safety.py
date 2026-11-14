@@ -1,3 +1,4 @@
+import random
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
@@ -151,11 +152,11 @@ def test_iban_prefix_with_trailing_currency(iban, suffix):
     assert allowed == iban + suffix
 
 
-def test_iban_ambiguous_valid_suffix_prefers_longest():
+def test_iban_national_length_excludes_checksum_valid_currency_suffix():
     text = "GB82 WEST 1234 5698 7654 32 USD"
     redacted, findings = redact_text(text)
-    assert redacted == "[REDACTED_IBAN_1]"
-    assert any(f.kind == "IBAN" and f.span == (0, len(text)) for f in findings)
+    assert redacted == "[REDACTED_IBAN_1] USD"
+    assert any(f.kind == "IBAN" and f.span == (0, len(text) - 4) for f in findings)
 
 
 @pytest.mark.parametrize("allowed", ["GB82 WEST 1234 5698 7654 32", "GB82WEST12345698765432",
@@ -167,3 +168,47 @@ def test_allowlisted_iban_candidate_preserves_currency_suffix(allowed, suffix):
     redacted, findings = redact_text(text, RedactionConfig(allowlist=frozenset({allowed})))
     assert redacted == iban + suffix + "; private account: [REDACTED_IBAN_1]"
     assert len([f for f in findings if f.kind == "IBAN"]) == 1
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("separator", [" ", " EUR ", " USD ", "\n"])
+def test_adjacent_allowlisted_and_private_ibans(reverse, separator):
+    public = "GB82 WEST 1234 5698 7654 32"
+    private = "DE93 3704 0044 1000 0000 01"
+    accounts = [private, public] if reverse else [public, private]
+    expected = ["[REDACTED_IBAN_1]", public] if reverse else [public, "[REDACTED_IBAN_1]"]
+    redacted, findings = redact_text(separator.join(accounts),
+                                    RedactionConfig(allowlist=frozenset({public.replace(" ", "")})))
+    assert redacted == separator.join(expected)
+    assert len([f for f in findings if f.kind == "IBAN"]) == 1
+
+
+def test_randomized_iban_scanner_does_not_skip_adjacent_accounts():
+    from agentmilieu.safety import _iban
+
+    rng = random.Random(317)
+    countries = [("DE", "", 18), ("GB", "WEST", 14), ("NL", "ABNA", 10), ("FR", "", 23)]
+    parts, accounts, allowed, expected_spans = [], [], set(), []
+    offset = 0
+    for index in range(80):
+        country, bank, digits = rng.choice(countries)
+        bban = bank + "".join(rng.choices("0123456789", k=digits))
+        rearranged = bban + country + "00"
+        numeric = "".join(str(ord(c) - 55) if c.isalpha() else c for c in rearranged)
+        compact = country + f"{98 - int(numeric) % 97:02d}" + bban
+        assert _iban(compact)
+        group_separator = rng.choice([" ", "  ", "\t", ""])
+        formatted = group_separator.join(compact[i:i + 4] for i in range(0, len(compact), 4))
+        accounts.append((formatted, index % 5 == 0))
+        if index % 5 == 0:
+            allowed.add(compact.lower())
+        else:
+            expected_spans.append((offset, offset + len(formatted)))
+        separator = rng.choice([" ", " EUR ", " USD ", "\n"])
+        parts.extend([formatted, separator])
+        offset += len(formatted) + len(separator)
+    text = "".join(parts)
+    redacted, findings = redact_text(text, RedactionConfig(allowlist=frozenset(allowed)))
+    assert [f.span for f in findings if f.kind == "IBAN"] == expected_spans
+    for account, permitted in accounts:
+        assert (account in redacted) is permitted
