@@ -12,6 +12,7 @@ from pathlib import Path
 
 from huggingface_hub import HfApi, hf_hub_download
 
+from .models import _read_header
 from .retrieval import bm25_search
 from .tokens import HeuristicTokenCounter
 
@@ -128,10 +129,11 @@ def _load(path, n_ctx, gpu):
 
     use_gpu = gpu and bool(llama_cpp.llama_supports_gpu_offload())
     devices = ["gpu", "cpu"] if use_gpu else ["cpu"]
+    failures = []
     for device in devices:
-        key = (path, n_ctx, device)
-        if key in _MODELS:
-            return (*_MODELS[key], device)
+        for (cached_path, cached_ctx, cached_device), cached in _MODELS.items():
+            if cached_path == path and cached_device == device and cached_ctx >= n_ctx:
+                return (*cached, device)
     while _MODELS:
         _, (previous, _) = _MODELS.popitem()
         previous.close()
@@ -140,10 +142,22 @@ def _load(path, n_ctx, gpu):
         try:
             model = llama_cpp.Llama(model_path=path, n_ctx=n_ctx,
                                     n_gpu_layers=-1 if device == "gpu" else 0, verbose=False)
-        except Exception:
+        except Exception as exc:
+            failures.append(f"{device}: {exc}")
             if device == "gpu":
                 continue
-            raise
+            architecture = "unknown"
+            try:
+                with open(path, "rb") as stream:
+                    architecture = _read_header(stream, 32 << 20).get("general.architecture", "unknown")
+            except (OSError, ValueError, UnicodeError):
+                pass
+            version = getattr(llama_cpp, "__version__", "unknown")
+            raise ValueError(
+                f"Cannot load model architecture '{architecture}' with the bundled llama.cpp "
+                f"(llama-cpp-python {version}). The architecture may be unsupported; pick another "
+                f"model or a compatible llama.cpp build. Original load errors: {'; '.join(failures)}"
+            ) from exc
         template = model.metadata.get("tokenizer.chat_template")
         if not template:
             model.close()
@@ -169,6 +183,13 @@ def _merge_system(messages):
     return merged
 
 
+class _ContextOverflow(ValueError):
+    def __init__(self, required):
+        super().__init__("System prompt and latest question exceed the context window "
+                         f"(need {required} tokens including generation)")
+        self.required = required
+
+
 def _messages(model, formatter, system, history, n_ctx, max_tokens, *, merge_system=False):
     messages = [{"role": "system", "content": system}]
     for message in history:
@@ -192,7 +213,7 @@ def _messages(model, formatter, system, history, n_ctx, max_tokens, *, merge_sys
         if count + max_tokens <= n_ctx:
             return candidate
         if len(messages) <= 2:
-            raise ValueError("System prompt and latest question exceed the context window")
+            raise _ContextOverflow(count + max_tokens)
         del messages[1]
         while len(messages) > 2 and messages[1]["role"] == "assistant":
             del messages[1]
@@ -206,9 +227,9 @@ def compare_chat(repo, filename, *, n_ctx, with_system, without_system=NEUTRAL_P
     Histories are role/content dict lists including the latest user question.
     Returns with_context/without_context reply strings and per-side metadata.
     Call this inside the UI's spaces.GPU worker, never pass a model across workers.
-    Oversized static context/questions raise ValueError rather than silently dropping facts.
+    Oversized prompts grow the context up to training limits rather than dropping pack facts.
     """
-    if n_ctx <= 0 or not 0 < max_tokens < n_ctx or not 0 <= temperature <= 2 or not 0 < top_p <= 1:
+    if n_ctx <= 0 or max_tokens <= 0 or not 0 <= temperature <= 2 or not 0 < top_p <= 1:
         raise ValueError("Invalid context or sampling parameters")
     if filename not in {f["filename"] for f in gguf_files(repo)}:
         raise ValueError("GGUF file is missing, oversized, split, or a projector")
@@ -216,28 +237,44 @@ def compare_chat(repo, filename, *, n_ctx, with_system, without_system=NEUTRAL_P
     if Path(path).stat().st_size > _max_bytes():
         raise ValueError("Downloaded GGUF exceeds size cap")
     with _LOCK:
-        model, formatter, device = _load(path, n_ctx, gpu)
         sides = [("with_context", with_system, with_history),
                  ("without_context", without_system, without_history)]
-        prepared = [(side, system, history,
-                     _messages(model, formatter, system, history, n_ctx, max_tokens))
-                    for side, system, history in sides]
-        result = {"metadata": {"device": device}}
-        for side, system, history, messages in prepared:
-            start = time.perf_counter()
+        while True:
+            model, formatter, device = _load(path, n_ctx, gpu)
+            n_ctx = model.n_ctx()
             try:
-                completion = model.create_chat_completion(
-                    messages=messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p)
-            except ValueError as exc:
-                if not _system_role_error(exc) or messages[0]["role"] != "system":
-                    raise
-                messages = _messages(model, formatter, system, history, n_ctx, max_tokens,
-                                     merge_system=True)
-                completion = model.create_chat_completion(
-                    messages=messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p)
-            result[side] = completion["choices"][0]["message"]["content"] or ""
-            result["metadata"][side] = {
-                "prompt_tokens": completion["usage"]["prompt_tokens"],
-                "generation_seconds": time.perf_counter() - start,
-            }
-        return result
+                return _generate_pair(model, formatter, sides, n_ctx, device,
+                                      temperature, max_tokens, top_p)
+            except _ContextOverflow as exc:
+                training = model._model.n_ctx_train()
+                grown = min(training, math.ceil(exc.required / 1024) * 1024)
+                if grown <= n_ctx:
+                    raise ValueError(f"Prompt needs {exc.required} tokens including generation, "
+                                     f"which exceeds model training context {training}. Reduce the pack, "
+                                     "question or max new tokens, or choose another model.") from exc
+                n_ctx = grown
+
+
+def _generate_pair(model, formatter, sides, n_ctx, device, temperature, max_tokens, top_p):
+    prepared = [(side, system, history,
+                 _messages(model, formatter, system, history, n_ctx, max_tokens))
+                for side, system, history in sides]
+    result = {"metadata": {"device": device, "n_ctx": n_ctx}}
+    for side, system, history, messages in prepared:
+        start = time.perf_counter()
+        try:
+            completion = model.create_chat_completion(
+                messages=messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p)
+        except ValueError as exc:
+            if not _system_role_error(exc) or messages[0]["role"] != "system":
+                raise
+            messages = _messages(model, formatter, system, history, n_ctx, max_tokens,
+                                 merge_system=True)
+            completion = model.create_chat_completion(
+                messages=messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p)
+        result[side] = completion["choices"][0]["message"]["content"] or ""
+        result["metadata"][side] = {
+            "prompt_tokens": completion["usage"]["prompt_tokens"],
+            "generation_seconds": time.perf_counter() - start,
+        }
+    return result

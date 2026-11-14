@@ -9,7 +9,10 @@ except ImportError:
 
 
 def _compare_worker(**kwargs):
-    return llm.compare_chat(**kwargs)
+    try:
+        return llm.compare_chat(**kwargs)
+    except Exception as exc:  # noqa: BLE001 -- ZeroGPU otherwise loses exception messages
+        return {"error": str(exc) or type(exc).__name__}
 
 
 if spaces is not None:

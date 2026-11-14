@@ -208,6 +208,8 @@ def compare_handler(session, repo, filename, n_ctx, temperature, max_tokens, top
             with_system=with_system, without_system=without_system,
             with_history=with_context, without_history=without, temperature=temperature,
             max_tokens=int(max_tokens), top_p=top_p)
+        if "error" in result:
+            raise ValueError(result["error"])
         without = [*without, {"role": "assistant", "content": result["without_context"]}]
         with_context = [*with_context, {"role": "assistant", "content": result["with_context"]}]
         metadata = result["metadata"]
@@ -215,7 +217,8 @@ def compare_handler(session, repo, filename, n_ctx, temperature, max_tokens, top
         def line(side):
             data = metadata[side]
             return (f'{metadata["device"]} · {data["prompt_tokens"]} prompt tokens · '
-                    f'{data["generation_seconds"]:.2f}s')
+                    f'{data["generation_seconds"]:.2f}s · '
+                    f'context {metadata.get("n_ctx", int(n_ctx)):,}')
 
         return without, with_context, line("without_context"), line("with_context"), "", _compare_status(session)
     except Exception as exc:

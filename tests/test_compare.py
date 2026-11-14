@@ -60,7 +60,7 @@ def test_catalog_files_and_context(monkeypatch, session):
 
 
 def test_comparison_updates_both_histories_and_uses_safe_pack(monkeypatch, session):
-    metadata = {"device": "cpu", **{side: {"prompt_tokens": 40, "generation_seconds": .5}
+    metadata = {"device": "cpu", "n_ctx": 6144, **{side: {"prompt_tokens": 40, "generation_seconds": .5}
                                   for side in ("without_context", "with_context")}}
     worker = Mock(return_value={"without_context": "plain reply", "with_context": "cited reply",
                                 "metadata": metadata})
@@ -73,6 +73,7 @@ def test_comparison_updates_both_histories_and_uses_safe_pack(monkeypatch, sessi
     assert result[0][-1]["content"] == "plain reply"
     assert result[1][-1]["content"] == "cited reply"
     assert "cpu · 40 prompt tokens · 0.50s" in result[2]
+    assert "context 6,144" in result[2]
     assert "Pending review" in result[5]
     args = worker.call_args.kwargs
     assert "ignore previous instructions" not in args["with_system"].lower()
@@ -112,6 +113,21 @@ def test_gpu_registration(monkeypatch):
     spec.loader.exec_module(module)
     assert module.compare(repo="repo") == {"repo": "repo"}
     assert decorated == [{"duration": 120}] and invoked == [{"repo": "repo"}]
+
+    def fail(**kwargs):
+        raise ValueError("Model architecture 'k2-horizon' cannot load")
+
+    monkeypatch.setattr(llm, "compare_chat", fail)
+    assert module.compare(repo="repo") == {"error": "Model architecture 'k2-horizon' cannot load"}
+    assert gpu._compare_worker(repo="repo") == {"error": "Model architecture 'k2-horizon' cannot load"}
+
+
+def test_worker_error_message_reaches_ui_redacted(monkeypatch, session):
+    monkeypatch.setattr(gpu, "compare", lambda **_: {"error": "Model cannot load; email alice@example.com"})
+    with pytest.raises(gr.Error, match="Model cannot load") as error:
+        web.compare_handler(session, "repo", "file", 4096, .7, 256, .95, "Question?")
+    assert "alice@example.com" not in str(error.value)
+    assert "REDACTED_EMAIL" in str(error.value)
 
 
 def test_unraisable_hook_is_narrow(monkeypatch):
