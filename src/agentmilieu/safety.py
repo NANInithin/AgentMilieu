@@ -166,7 +166,8 @@ def _redactions(text, config):
             raw = match.group()
             start, end = match.span()
             in_url = any(left <= start < right for left, right in url_spans)
-            if kind == "PHONE" and in_url:
+            if kind == "PHONE" and in_url and not re.search(
+                    r"[?&#;][\w.-]+=$", text[max(0, start - 128):start]):
                 continue
             if kind == "GENERIC_SECRET":
                 if not _secret_key(match.group(1)):

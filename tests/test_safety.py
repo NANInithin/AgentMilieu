@@ -58,6 +58,7 @@ def test_luhn_negative_allowlist_flags():
     "https://en.wikipedia.org/wiki/Special:Map/6/40.75/14.4861/en",
     "https://example.org/Map/6/40.75/14.4861/en",
     "https://example.org/contact/555-123-4567",
+    "https://example.org?latitude=14.4861#longitude=40.75000",
     "ISSN 1828-3179", "ISBN 978-0-19-960235-3",
     "ISBN (identifier)') [978-0-19-960235-3",
     "[ISSN](https://en.wikipedia.org/wiki/ISSN 'ISSN (identifier)') [1828-3179]",
@@ -106,6 +107,15 @@ def test_secret_url_parameters_are_redacted(parameter):
                                  "+33 6.12.34.56.78", "+1.555.123.4567"])
 def test_real_phone_formats_still_redacted(phone):
     assert redact_text(phone)[0] == "[REDACTED_PHONE_1]"
+
+
+@pytest.mark.parametrize("parameter", ["?phone=", "?page=1&tel=", "#mobile=", "?page=1;contact="])
+@pytest.mark.parametrize("phone", ["555-123-4567", "+33612345678", "(555)123-4567"])
+def test_phone_url_parameter_values_are_redacted(parameter, phone):
+    prefix = "https://example.org" + parameter
+    cleaned, findings = redact_text(prefix + phone + "&page=2")
+    assert cleaned == prefix + "[REDACTED_PHONE_1]&page=2"
+    assert [finding.span for finding in findings] == [(len(prefix), len(prefix) + len(phone))]
 
 
 @pytest.mark.parametrize("rule,text", [
