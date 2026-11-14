@@ -111,7 +111,7 @@ def _redactions(text, config):
             if kind == "IBAN":
                 prefixes = [i for i in range(15, len(raw) + 1)
                             if i == len(raw) or raw[i] == " "]
-                valid_end = next((i for i in prefixes if _iban(raw[:i])), None)
+                valid_end = next((i for i in reversed(prefixes) if _iban(raw[:i])), None)
                 if valid_end is None:
                     continue
                 raw, end = raw[:valid_end], start + valid_end

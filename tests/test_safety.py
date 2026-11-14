@@ -141,11 +141,18 @@ def test_mistral_sdk_adapter(monkeypatch):
     assert client.chat.complete.call_args.kwargs["messages"][1]["content"] == "already redacted"
 
 
-@pytest.mark.parametrize("suffix", [" EUR", " EUR total", " USD", ""])
-def test_iban_prefix_with_trailing_currency(suffix):
-    iban = "GB82 WEST 1234 5698 7654 32"
+@pytest.mark.parametrize("iban", ["GB82 WEST 1234 5698 7654 32", "DE93 3704 0044 1000 0000 01"])
+@pytest.mark.parametrize("suffix", [" EUR", " EUR total", ""])
+def test_iban_prefix_with_trailing_currency(iban, suffix):
     redacted, findings = redact_text(iban + suffix)
     assert redacted == "[REDACTED_IBAN_1]" + suffix
     assert any(f.kind == "IBAN" and f.span == (0, len(iban)) for f in findings)
     allowed, _ = redact_text(iban + suffix, RedactionConfig(allowlist=frozenset({iban})))
     assert allowed == iban + suffix
+
+
+def test_iban_ambiguous_valid_suffix_prefers_longest():
+    text = "GB82 WEST 1234 5698 7654 32 USD"
+    redacted, findings = redact_text(text)
+    assert redacted == "[REDACTED_IBAN_1]"
+    assert any(f.kind == "IBAN" and f.span == (0, len(text)) for f in findings)
