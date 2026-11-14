@@ -1,27 +1,143 @@
+---
+title: AgentMilieu
+emoji: 🛡️
+colorFrom: indigo
+colorTo: green
+sdk: gradio
+sdk_version: 6.32.0
+app_file: app.py
+license: apache-2.0
+---
+
 # AgentMilieu
 
 A trusted context compiler for on-device SLMs (llama.cpp/GGUF, model-independent).
 Hackathon theme: AI Trust & Safety.
 
-Steps 1–3 provide offline model/device profiling, conservative context budgeting,
-ingestion, safety/redaction/provenance, composition, local FastMCP generation,
-auditing and Notion/local review with approval-gated export. Expanded CLI commands
-and the Gradio app are future steps.
+Small language models have scarce RAM and context, while scraped/uploaded documents
+can carry malicious instructions or private data. AgentMilieu compiles **trusted-by-process,
+not inherently trusted** context: redact, quarantine, preserve provenance, fit the target,
+audit, and require human review before export. Built for an AI Trust & Safety hackathon.
+
+Features include model/device profiling, conservative context budgets, multi-format
+ingestion, heuristic safety, cited stuff/compress/BM25-RAG composition, standalone
+FastMCP generation, transparent audits, Notion/local review, a Typer CLI and Gradio UI.
 External services are optional; no credentials are required for file ingestion or budgeting.
 
 ## Run
 
 ```sh
-python -m pip install -e '.[dev]'
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev,app,services]'
+cp .env.example .env  # optional; leave service keys empty for offline use
 milieu --help
-milieu
+milieu budget --model Llama-3.2-1B --device phone-6gb
+milieu build --file examples --offline --purpose 'Explain offline operation and safety'
+python app.py  # http://localhost:7860
+# In a second terminal: python examples/verify_space.py
 ruff check . && pytest -q
 ```
 
-The CLI currently has a single budget command (Typer exposes it at the root).
-Use `--model Llama-3.2-1B --device phone-6gb --max-ctx 4096` to override defaults.
-`requirements.txt` installs app extras for future HF Spaces integration. Service SDKs
-are optional via `.[services]`; no tests make network calls.
+Python 3.10+ is required. `pip install -e .` installs only the CLI/compiler; app, ingestion,
+service and test extras are optional. Tests use CliRunner/mocks and block network sockets.
+`.env` is loaded without overriding real environment variables; never commit credentials.
+`MILIEU_HOME` selects the interface registry root (default `.milieu`). `MISTRAL_MODEL`
+optionally overrides the classifier/summariser model (default `mistral-small-latest`).
+All providers are optional; with no keys, uploaded/local documents work offline.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  S[URLs / topics / uploads] --> I[Extract + provenance]
+  I --> F[Redact + injection checks]
+  F --> Q[Quarantine report]
+  F --> C[Safe chunks]
+  M[GGUF / preset / manual model] --> B[Device RAM + KV budget]
+  C --> P[Stuff / compress / BM25 RAG]
+  B --> P
+  P --> T[Narrow local FastMCP tools]
+  T --> A[Scorecard + optional Scorton]
+  A --> R[Notion / local Pending review]
+  R --> H{Approved + matching hash?}
+  H -->|yes| E[Pack + hashes + prompt-cache launcher]
+  H -->|no| X[Refuse export]
+```
+
+## CLI walkthrough
+
+```sh
+milieu models
+milieu devices
+milieu budget --max-ctx 4096
+milieu build --file examples/specs.md --file examples/workflow.md \
+  --file examples/untrusted.md --preset Llama-3.2-1B --device-preset phone-6gb \
+  --purpose 'What works offline?' --offline
+milieu status PACK_ID
+milieu export PACK_ID --out exports  # refused while Pending review
+milieu approve PACK_ID                # local only; review the draft first
+milieu export PACK_ID --out exports
+milieu reject PACK_ID                 # subsequent exports refused
+
+# Explicit network access; requires Context.dev for topic research:
+milieu build --url https://example.org --name 'public device specification' --no-mistral
+milieu build --file notes.md --hf-repo owner/repo --hf-file model.gguf
+milieu build --file notes.md --gguf /absolute/model.gguf --adb
+milieu build --file notes.md --n-layers 16 --n-kv-heads 8 --head-dim 64 \
+  --n-ctx-train 8192 --weights-gb 0.8 --ram-gb 6 --available-gb 4.5 \
+  --kv-type q8_0 --max-ctx 4096 --quality-cap 8192 --strategy compress --offline
+```
+
+`--file` accepts repeated files/directories; directories recursively include supported
+document formats and skip hidden paths. Model/device selector families are mutually
+exclusive. GB flags mean GiB. `--quality-cap 0` disables the quality cap;
+`--latency-target SECONDS` opts into latency capping (`--prefill-tok-s` is an estimate).
+`--strategy auto|stuff|compress|rag` never bypasses budget checks: forced stuff/RAG
+fails if it cannot fit; automatic RAG may fall back to compression. `--no-mistral`
+disables **both** external classification and summarisation, not local safety rules.
+`--offline` rejects remote sources/models and Scorton and disables Mistral/Notion.
+`--scorton` explicitly enables the optional npm audit. Errors exit nonzero.
+Notion-backed packs must be approved/rejected in Notion, not with CLI local overrides.
+Running `milieu` without a subcommand retains the default budget explanation.
+
+## Gradio and Hugging Face Spaces
+
+Run `python app.py` and open port **7860**. Sources → Target → Build & Audit →
+Review & Export walks through compilation. Start in offline mode, upload the three
+Markdown files in `examples/`, inspect the quarantine/redaction table, try Export
+before approval, Approve locally, then download the approved ZIP. For URLs/topics
+or services, uncheck Offline mode. The integration banner reports configured keys
+and Node availability, **not** service health or a completed audit.
+
+Each browser/API session has server-side `gr.State` and a separate registry under
+`MILIEU_HOME/sessions/<random-id>`; no global current-pack state is shared. A new build
+clears the prior download, and all exports recheck approval/hash. Local buttons are
+disabled for Notion-backed drafts; local fallback drafts remain locally reviewable.
+Session registries are not the CLI root registry: to inspect one from the CLI, set
+`MILIEU_HOME` to that session directory. UI writes are serialized within one server;
+the JSON registry does not support multiple server workers/process writers.
+
+1. Create a **Gradio** Space and upload/sync this repository, including `src/`,
+   `pyproject.toml`, `requirements.txt`, `app.py` and this README. YAML above pins the
+   same Gradio version as the app extra. `requirements.txt` installs `.[app,services]`.
+2. Add optional keys as Space **Settings → Variables and secrets**, never source files.
+   Add `MILIEU_HOME=/data/milieu` only if persistent storage is enabled; otherwise
+   drafts disappear when the container restarts. No system packages are required.
+3. The app binds `0.0.0.0:7860`, does not create a public Gradio share tunnel, and does
+   not require Node for its UI (client-side rendering). Scorton is skipped if Node/npx
+   is absent; installing Node is optional, not a prerequisite for offline compilation.
+
+**Privacy/deployment boundary:** hosted uploads necessarily reach the host and Gradio's
+temporary upload cache **before** application safety processing. Compiler drafts,
+Notion and model calls receive safety-processed data only. Context/audit previews use
+plain text, not rendered untrusted Markdown. Gradio cache cleanup runs hourly for
+files older than an hour; persistent drafts/downloads need operator-managed retention.
+Do not use sensitive documents in a public demo. Use a private/local deployment, add
+authentication/network egress controls and upload quotas for production. Session
+isolation is not an authenticated reviewer identity. Local Approve is intentionally
+an unauthenticated demo workflow; do not expose it as an authorization boundary.
+URL ingestion is not SSRF-hardened: restrict network access on shared deployments.
 
 ## Python API
 
@@ -49,6 +165,16 @@ include a small amount of adjacent tensor data. Network/auth errors propagate, s
 can select offline presets or manual input. Remote big-endian GGUF is unsupported.
 
 KV bytes/token = 2 × layers × KV heads × head dimension × element bytes.
+The complete planning formula is:
+
+```text
+usable = available_RAM × usable_fraction
+free_for_KV = usable − weights − compute_workspace − retrieval_index_RAM
+memory_tokens = max(0, floor(free_for_KV / KV_bytes_per_token))
+window = min(memory_tokens, training_context, user_cap?, quality_cap?, latency_cap?)
+knowledge = max(0, window − system − tools − query − generation − retrieval_reserve)
+```
+
 Cache types: f16=2, q8_0=1.0625, q4_0=0.5625 bytes/element.
 Usable RAM defaults to 70% of currently available RAM to leave mobile OS headroom.
 Compute workspace defaults to max(256 MiB, 10% of model weights); override it for a
@@ -210,6 +336,14 @@ are not overwritten.
 
 With both `NOTION_TOKEN` and `NOTION_DATABASE_ID` set (`.[services]`), builds create a
 Notion page as Pending review. A database shared with the integration is required.
+Create an internal integration at https://www.notion.so/profile/integrations with
+read/insert/update content permissions. Create a full-page database, rename its title
+property to **Name**, then use the database's **… → Connections → Add connections**
+to grant your integration access. Copy the integration secret to `NOTION_TOKEN` and
+the database id from its URL (not a row/page id) to `NOTION_DATABASE_ID`. The helper
+adds missing properties below; conflicting existing types produce a local fallback
+warning rather than silently changing your schema. Change the page's Status select
+in Notion to review it; leave **Pack hash** unchanged.
 `NotionStore.ensure_schema()` adds these properties (and validates existing types):
 
 | Property | Type |
@@ -255,3 +389,24 @@ The currently inspected npm release routes `audit` to mock Rust host checks even
 filesystem targets. Such placeholder output is captured but explicitly marked skipped,
 not represented as a real source/security audit. Reports written by the CLI are captured
 alongside stdout/stderr inside the private audit workspace.
+
+## Known limitations and roadmap
+
+- Safety is heuristic: obfuscated injections, unknown secret formats and semantic
+  hallucinations can pass. Citation presence is not proof that a claim is supported.
+- Preset geometry, available RAM, prefill rate and chars/4 token counts are estimates.
+  Profile the real GGUF, tokenizer, KV types and runtime on the destination device.
+- The local registry is not a signed/authenticated review service. Hosted session
+  storage and Gradio uploads are not a secure document vault; configure access,
+  retention and egress before deploying beyond a hackathon demo.
+- PDF OCR, JavaScript-heavy scraping, arbitrary architecture KV layouts and automatic
+  llama.cpp MCP dispatch are not implemented. `run.sh` is a raw prompt-cache launcher;
+  an MCP client is needed for retrieval/tool use. Optional services require connectivity.
+- Scorton is best effort and its inspected mock host-check output is not a pack audit.
+
+Roadmap: model-tokenizer/chat-template accounting; measured device/runtime profiles;
+semantic grounding evaluation and adversarial regression corpus; authenticated,
+signed review with transactional storage; bounded retrieval-loop runtime integration;
+URL allowlists, resource quotas and private deployment hardening.
+
+Licensed under Apache-2.0; see [LICENSE](LICENSE).
