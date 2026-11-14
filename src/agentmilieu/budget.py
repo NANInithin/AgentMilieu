@@ -17,7 +17,8 @@ class BudgetConfig:
     retrieval_overhead_bytes: int = 0
     max_ctx: int | None = None
     prefill_tok_s: float = 100.0
-    target_first_token_s: float = 10.0
+    target_first_token_s: float | None = None
+    prompt_cache_path: str = "milieu-prompt.cache"
     quality_cap: int | None = 8192
     system_tokens: int = 256
     tool_tokens: int = 0
@@ -30,6 +31,8 @@ class BudgetConfig:
         if not math.isfinite(self.usable_fraction) or not 0 < self.usable_fraction <= 1:
             raise ValueError("usable_fraction must be in (0, 1]")
         for name in ("prefill_tok_s", "target_first_token_s"):
+            if name == "target_first_token_s" and self.target_first_token_s is None:
+                continue
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
         for name in ("compute_buffer_bytes", "retrieval_overhead_bytes", "max_ctx", "quality_cap",
@@ -52,7 +55,8 @@ class BudgetResult:
     compute_buffer_bytes: int
     free_bytes: int
     mem_tokens: int
-    latency_cap: int
+    latency_cap: int | None
+    estimated_cold_prefill_s: float
     constraints: dict[str, int]
     context_window: int
     reserved_tokens: int
@@ -75,13 +79,17 @@ def calculate_budget(model: ModelSpec, device: DeviceProfile,
         compute = max(256 * 1024**2, math.ceil(model.weights_bytes * 0.1))
     free = usable - model.weights_bytes - compute - config.retrieval_overhead_bytes
     memory = max(0, math.floor(free / kv))
-    latency = math.floor(config.prefill_tok_s * config.target_first_token_s)
-    constraints = {"memory": memory, "training": model.n_ctx_train, "latency": latency}
+    latency = (math.floor(config.prefill_tok_s * config.target_first_token_s)
+               if config.target_first_token_s is not None else None)
+    constraints = {"memory": memory, "training": model.n_ctx_train}
+    if latency is not None:
+        constraints["latency"] = latency
     if config.max_ctx is not None:
         constraints["user"] = config.max_ctx
     if config.quality_cap is not None:
         constraints["quality"] = config.quality_cap
     context = min(constraints.values())
+    cold_prefill = context / config.prefill_tok_s
     binding = tuple(key for key, value in constraints.items() if value == context)
     reserved = (config.system_tokens + config.tool_tokens + config.query_tokens
                 + config.max_new_tokens)
@@ -95,7 +103,8 @@ def calculate_budget(model: ModelSpec, device: DeviceProfile,
         warnings.append("Model preset values are approximate; inspect the actual GGUF before export.")
     warnings.append("RAM, latency and quality are estimates; validate on the target device/runtime.")
     flags = (("-c", str(context), "-ctk", config.kv_type, "-ctv", config.kv_type,
-              "-n", str(config.max_new_tokens)) if context > 0 and reserved <= context else ())
+              "-n", str(config.max_new_tokens), "--prompt-cache", config.prompt_cache_path,
+              "--prompt-cache-ro") if context > 0 and reserved <= context else ())
     lines = (
         f"Model: {model.name}; device: {device.name}",
         (f"RAM total={device.total_ram:,}; available={device.available_ram:,} bytes; "
@@ -105,11 +114,12 @@ def calculate_budget(model: ModelSpec, device: DeviceProfile,
         f"Free for KV={free:,} bytes; KV={kv:,.2f} bytes/token ({config.kv_type}).",
         "Context constraints: " + ", ".join(f"{k}={v:,}" for k, v in constraints.items()),
         f"Context window={context:,}; binding: {', '.join(binding)}.",
+        f"Estimated cold prefill time={cold_prefill:.2f}s at {config.prefill_tok_s:g} tok/s.",
         (f"Reserve system={config.system_tokens}, tools={config.tool_tokens}, "
          f"query={config.query_tokens}, generation={config.max_new_tokens}; total={reserved:,}."),
         f"Knowledge budget={knowledge:,} tokens.",
         "Recommended llama.cpp flags: " + (" ".join(flags) if flags else "none (infeasible budget)"),
     )
     return BudgetResult(model, device, config, element, kv, usable, compute, free, memory,
-                        latency, constraints, context, reserved, knowledge, binding, flags,
+                        latency, cold_prefill, constraints, context, reserved, knowledge, binding, flags,
                         lines, tuple(warnings))

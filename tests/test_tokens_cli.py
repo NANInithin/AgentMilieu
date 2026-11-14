@@ -27,6 +27,6 @@ def test_cli():
     runner = CliRunner()
     result = runner.invoke(app, [])
     assert result.exit_code == 0
-    assert "Knowledge budget=104 tokens" in result.stdout
+    assert "Knowledge budget=7,296 tokens" in result.stdout
     result = runner.invoke(app, ["--model", "unknown"])
     assert result.exit_code != 0

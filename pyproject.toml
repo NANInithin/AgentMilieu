@@ -7,10 +7,11 @@ name = "agentmilieu"
 version = "0.1.0"
 description = "A trusted context compiler for on-device SLMs"
 requires-python = ">=3.10"
-dependencies = ["typer>=0.12", "gguf>=0.10", "huggingface_hub>=0.25"]
+dependencies = ["typer>=0.12", "gguf>=0.10", "huggingface_hub>=0.25", "requests>=2.25"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.9"]
+dev = ["pytest>=8", "ruff>=0.9", "reportlab", "pypdf", "python-docx", "openpyxl", "python-pptx"]
+ingest = ["pypdf", "python-docx", "openpyxl", "python-pptx"]
 tokenizers = ["tokenizers>=0.20"]
 services = ["context.dev", "notion-client", "mistralai"]
 app = ["gradio", "pypdf", "python-docx", "openpyxl", "python-pptx", "mcp", "rank-bm25", "python-dotenv", "pydantic"]

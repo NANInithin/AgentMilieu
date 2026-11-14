@@ -22,7 +22,8 @@ def test_budget_math():
     assert result.reserved_tokens == 100
     assert result.knowledge_budget == 99900
     assert result.binding_constraints == ("training",)
-    assert result.llama_cpp_flags == ("-c", "100000", "-ctk", "f16", "-ctv", "f16", "-n", "40")
+    assert result.llama_cpp_flags == ("-c", "100000", "-ctk", "f16", "-ctv", "f16", "-n", "40",
+                                      "--prompt-cache", "milieu-prompt.cache", "--prompt-cache-ro")
 
 
 @pytest.mark.parametrize("kind,element", [("f16", 2), ("q8_0", 1.0625), ("q4_0", .5625)])
@@ -64,9 +65,11 @@ def test_reservations_exceed_context():
 def test_default_compute_and_preset():
     result = calculate_budget(MODEL_PRESETS["Llama-3.2-1B"], DEVICE_PRESETS["phone-6gb"])
     assert result.compute_buffer_bytes == 256 * 1024**2
-    assert result.context_window == 1000
-    assert result.knowledge_budget == 104
-    assert result.binding_constraints == ("latency",)
+    assert result.context_window == 8192
+    assert result.knowledge_budget == 7296
+    assert result.binding_constraints == ("quality",)
+    assert result.latency_cap is None
+    assert result.estimated_cold_prefill_s == 81.92
 
 
 @pytest.mark.parametrize("kwargs", [{"kv_type": "bad"}, {"usable_fraction": 0},
