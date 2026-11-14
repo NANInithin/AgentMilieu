@@ -114,11 +114,21 @@ def _entropy(text):
     return -sum((n / len(text)) * math.log2(n / len(text)) for n in Counter(text).values())
 
 
-def _secret_key(name):
+def _name_segments(name):
     segments = set(re.split(r"[_ .-]+", name.casefold()))
     name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
     name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
     segments.update(re.split(r"[_ .-]+", name.casefold()))
+    return segments
+
+
+def _phone_key(name):
+    return bool(_name_segments(name) & {"phone", "tel", "telephone", "mobile", "cell", "fax",
+                                       "whatsapp", "msisdn", "sms", "contact"})
+
+
+def _secret_key(name):
+    segments = _name_segments(name)
     return bool(segments & {"key", "token", "secret", "password", "passwd", "passw", "pwd",
                             "passphrase", "auth", "authorization", "authentication", "credential",
                             "credentials", "api", "bearer", "session", "private", "access"}
@@ -139,7 +149,7 @@ PATTERNS = {
     "IBAN": r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b",
     "CREDIT_CARD": r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)",
     "IP": r"(?<![\w:.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![\w:])",
-    "PHONE": r"(?<![\w])\+?\d[\d(). -]{6,}\d(?!\w)|(?<!\w)\(\d{3}\)[ .-]*\d{3}[ .-]*\d{4}(?!\w)",
+    "PHONE": r"(?<![\w])(?:\+|%2[Bb])?\d[\d(). -]{6,}\d(?!\w)|(?<!\w)\(\d{3}\)[ .-]*\d{3}[ .-]*\d{4}(?!\w)",
 }
 
 
@@ -166,9 +176,11 @@ def _redactions(text, config):
             raw = match.group()
             start, end = match.span()
             in_url = any(left <= start < right for left, right in url_spans)
-            if kind == "PHONE" and in_url and not re.search(
-                    r"[?&#;][\w.-]+=$", text[max(0, start - 128):start]):
-                continue
+            if kind == "PHONE" and in_url:
+                parameter = re.search(r"[?&#;]([\w.-]+)=$", text[max(0, start - 128):start])
+                if not parameter or not (_phone_key(parameter.group(1)) or raw.startswith("+")
+                                         or raw[:3].casefold() == "%2b"):
+                    continue
             if kind == "GENERIC_SECRET":
                 if not _secret_key(match.group(1)):
                     continue
@@ -184,20 +196,21 @@ def _redactions(text, config):
             if kind == "CREDIT_CARD" and not _luhn(raw):
                 continue
             if kind == "PHONE":
-                digits = re.sub(r"\D", "", raw)
+                phone = "+" + raw[3:] if raw[:3].casefold() == "%2b" else raw
+                digits = re.sub(r"\D", "", phone)
                 if re.search(r"\b(?:ISBN(?:-1[03])?|ISSN|DOI)\b[^\d\n]{0,80}$",
                              text[max(0, start - 128):start], re.IGNORECASE):
                     continue
-                if not raw.startswith("+") and re.fullmatch(r"[+-]?\d+\.\d+(?:[\s/,°]+[+-]?\d+\.\d+)*", raw):
+                if not phone.startswith("+") and re.fullmatch(r"[+-]?\d+\.\d+(?:[\s/,°]+[+-]?\d+\.\d+)*", phone):
                     continue
                 if len(digits) == 13 and digits.startswith(("978", "979")):
                     continue
-                if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", raw):
+                if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", phone):
                     continue
                 if not 7 <= len(digits) <= 15:
                     continue
                 # Do not relabel invalid credit-card candidates as phone numbers.
-                if len(digits) >= 13 and not raw.startswith("+"):
+                if len(digits) >= 13 and not phone.startswith("+"):
                     continue
             if kind == "IP":
                 try:
