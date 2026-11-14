@@ -1,23 +1,23 @@
 """Session-scoped Gradio handlers. No credentials or registry ids are client inputs."""
 
-import re
 import shutil
 import uuid
 from functools import lru_cache
 
 import gradio as gr
 
-from . import gpu, llm
+from . import devices, gpu, llm
 from . import interfaces as ui
 from .audit import audit_markdown
 from .budget import BudgetConfig
 from .composer import ComposeOptions
 from .devices import DEVICE_PRESETS
 from .export import export
-from .models import MODEL_PRESETS, ModelSpec
+from .models import ModelSpec
 from .pipeline import BuildOptions, build_pack
 from .safety import SafetyPolicy, redact_text
 from .store import LocalRegistry
+from .tokens import gguf_token_counter
 
 
 def new_session():
@@ -39,29 +39,34 @@ def review_text(session):
             f"Notion page ID: {entry['page_id'] or '—'}")
 
 
-def build_handler(session=None, urls="", names="", files=None, purpose="", model_mode="Preset",
-                  preset="Llama-3.2-1B", hf_repo="", hf_file="", n_layers=16, n_kv_heads=8,
-                  head_dim=64, n_ctx_train=8192, weights_gb=0.8, device_mode="Preset",
+def build_handler(session=None, urls="", names="", files=None, purpose="",
+                  hf_repo="", hf_file="", device_mode="Probe this machine",
                   device_preset="phone-6gb", ram_gb=6, available_gb=4.5, kv_type="f16",
                   max_ctx=8192, quality_cap=8192, latency_target=0, prefill_tok_s=100,
-                  strategy="auto", no_mistral=False, offline=True, scorton=False):
+                  strategy="auto", no_mistral=False, offline=True, scorton=False,
+                  model_source="Recommended", model_repo_choices=None, model_file_choices=None):
     try:
         session = dict(session or new_session())
-        if offline and (urls.strip() or names.strip() or model_mode == "HF GGUF" or scorton):
-            raise ValueError("Offline mode requires uploaded files and preset/manual model; disable Scorton")
-        if model_mode == "Preset":
-            model = ui.select_model(preset)
-        elif model_mode == "HF GGUF":
-            model = ui.select_model(hf_repo=hf_repo, hf_file=hf_file)
-        elif model_mode == "Manual":
-            model = ui.select_model(n_layers=n_layers, n_kv_heads=n_kv_heads, head_dim=head_dim,
-                n_ctx_train=n_ctx_train, weights_gb=weights_gb)
+        if offline and (urls.strip() or names.strip() or scorton):
+            raise ValueError("Offline mode requires uploaded files; disable URLs/topics and Scorton. "
+                             "Hub model headers and tokenizer downloads are still allowed.")
+        if not hf_repo or not hf_file:
+            raise ValueError("Select a Hub GGUF repository and file in Target")
+        model = ui.select_model(hf_repo=hf_repo, hf_file=hf_file)
+        counter = gguf_token_counter(hf_repo)
+        warnings = []
+        if counter is None:
+            warnings.append("Warning: token counts are estimated; the with-context prompt may exceed the budget.")
         else:
-            raise ValueError("Unknown model selection mode")
-        if device_mode not in ("Preset", "Manual"):
+            warnings.append("Token accounting uses the selected model's Hub tokenizer.json.")
+        if device_mode not in ("Probe this machine", "Preset", "Manual"):
             raise ValueError("Unknown device selection mode")
-        device = (ui.select_device(device_preset) if device_mode == "Preset" else
-                  ui.select_device(ram_gb=ram_gb, available_gb=available_gb))
+        if device_mode == "Probe this machine":
+            device, summary = _probe_device()
+            warnings.append(summary)
+        else:
+            device = (ui.select_device(device_preset) if device_mode == "Preset" else
+                      ui.select_device(ram_gb=ram_gb, available_gb=available_gb))
         if quality_cap < 0 or max_ctx < 0 or latency_target < 0:
             raise ValueError("Caps and latency must be >= 0 (0 disables the optional cap)")
         disabled = no_mistral or offline
@@ -72,11 +77,14 @@ def build_handler(session=None, urls="", names="", files=None, purpose="", model
             composition=ComposeOptions(strategy=strategy, use_mistral=not disabled),
             safety=SafetyPolicy(use_mistral=not disabled), external_audit=scorton)
         result = build_pack(ui.source_inputs(urls.splitlines(), names.splitlines(), files or []),
-                            model, device, options)
+                            model, device, options, counter=counter)
         session["pack_id"] = result.pack_id
+        session["target"] = {"source": model_source, "repo": hf_repo, "file": hf_file,
+                             "repos": model_repo_choices or [hf_repo],
+                             "files": model_file_choices or [hf_file]}
         pack, registry = result.pack, LocalRegistry(session["root"])
         local = registry.get(result.pack_id)["backend"] == "local"
-        budget_text = "\n".join((*pack.budget.explanation, *pack.budget.warnings, *result.warnings))
+        budget_text = "\n".join((*pack.budget.explanation, *pack.budget.warnings, *result.warnings, *warnings))
         return (session, budget_text, ui.ram_rows(pack.budget),
                 pack.strategy + "\n" + "\n".join((*pack.explanation, *pack.model_notes)),
                 list(map(list, pack.token_accounting.items())), ui.safety_rows(result.pack_id, registry),
@@ -118,6 +126,22 @@ def _session_pack(session):
     return registry.load_payload(session["pack_id"])["pack"]
 
 
+def probe_handler():
+    try:
+        _, summary = _probe_device()
+        return redact_text(summary)[0]
+    except Exception as exc:
+        raise gr.Error(redact_text(str(exc))[0]) from exc
+
+
+def _probe_device():
+    try:
+        info = gpu.probe()
+    except Exception as exc:  # noqa: BLE001 -- allocation/quota failures can precede worker execution
+        info = {"error": f"GPU probe unavailable: {exc}"}
+    return devices.probe_machine(info)
+
+
 def _compare_status(session):
     if not session or not session.get("pack_id"):
         return "Build a pack in this session first. Compare downloads a model from the Hub."
@@ -129,18 +153,21 @@ def _compare_status(session):
 def compare_setup(session):
     repos = llm.curated_models()
     context, cap, repo = 8192, 131072, repos[0]
+    source, file_update = "Recommended", gr.update(choices=[], value=None)
     ready = bool(session and session.get("pack_id"))
     if ready:
         pack = _session_pack(session)
         context = pack["budget"]["context_window"]
         model = pack["budget"]["model"]
-        name = re.sub(r"\W", "", model["name"]).lower()
-        repo = next((r for r in repos if name in re.sub(r"\W", "", r).lower()), repo)
+        target = session.get("target")
+        if target:
+            repo, repos, source = target["repo"], target["repos"], target["source"]
+            file_update = gr.update(choices=target["files"], value=target["file"])
         cap = model["n_ctx_train"]
     return (_compare_status(session), gr.update(interactive=ready),
             gr.update(value=context, maximum=max(context, cap)),
-            gr.update(choices=repos, value=repo), "Recommended",
-            gr.update(choices=[], value=None), [], [], "", "", "")
+            gr.update(choices=repos, value=repo), source,
+            file_update, [], [], "", "", "")
 
 
 def catalog_handler(source, query="", session=None):
@@ -153,7 +180,7 @@ def catalog_handler(source, query="", session=None):
             repos = llm.curated_models()
         else:
             raise ValueError("Unknown model source")
-        preferred = compare_setup(session)[3]["value"] if source == "Recommended" else None
+        preferred = session.get("target", {}).get("repo") if session else None
         return gr.update(choices=repos, value=preferred if preferred in repos else
                          (repos[0] if repos else None))
     except Exception as exc:
@@ -241,6 +268,48 @@ def clear_compare():
     return [], [], "", "", ""
 
 
+def _model_picker():
+    with gr.Row():
+        source = gr.Radio(["My account", "Recommended", "Search Hub"], value="Recommended", label="Source")
+        refresh = gr.Button("Refresh")
+        query = gr.Textbox(label="Search Hub")
+        search = gr.Button("Search Hub")
+    repos = llm.curated_models()
+    repo = gr.Dropdown(repos, value=repos[0], label="GGUF repository")
+    file = gr.Dropdown([], label="GGUF file (Q4_K_M preferred)")
+    return {"source": source, "refresh": refresh, "query": query, "search": search,
+            "repo": repo, "file": file, "repos": gr.State(repos), "files": gr.State([])}
+
+
+def _picker_files(repo):
+    update = files_handler(repo)
+    return update, update["choices"]
+
+
+def _wire_model_picker(picker, session, prefix):
+    def catalog(source, query, state):
+        update = catalog_handler(source, query, state)
+        return update, update["choices"]
+
+    def select_source(source, query, state):
+        return source, *catalog(source, query, state)
+
+    file_outputs = [picker["file"], picker["files"]]
+    picker["source"].input(catalog, [picker["source"], picker["query"], session],
+                           [picker["repo"], picker["repos"]], api_name=f"{prefix}_catalog").success(
+                           _picker_files, picker["repo"], file_outputs, api_visibility="private")
+    picker["refresh"].click(lambda state: select_source("My account", "", state), session,
+                            [picker["source"], picker["repo"], picker["repos"]],
+                            api_visibility="private").success(
+                            _picker_files, picker["repo"], file_outputs, api_visibility="private")
+    for event in (picker["search"].click, picker["query"].submit):
+        event(lambda query, state: select_source("Search Hub", query, state),
+              [picker["query"], session], [picker["source"], picker["repo"], picker["repos"]],
+              api_visibility="private").success(
+              _picker_files, picker["repo"], file_outputs, api_visibility="private")
+    picker["repo"].input(_picker_files, picker["repo"], file_outputs, api_name=f"{prefix}_files")
+
+
 def create_app():
     integrations = ui.integrations()
     with gr.Blocks(title="AgentMilieu", analytics_enabled=False, delete_cache=(3600, 3600)) as demo:
@@ -259,20 +328,15 @@ def create_app():
                             file_types=sorted(ui.FILE_TYPES))
             purpose = gr.Textbox(label="Purpose / intended questions", lines=3)
             offline = gr.Checkbox(value=not any(value == "configured" for value in integrations.values()),
-                                  label="Offline mode: files only; no external services")
+                                  label="Offline mode: uploaded sources; Hub model metadata/tokenizer allowed")
         with gr.Tab("2 · Target"):
-            model_mode = gr.Radio(["Preset", "HF GGUF", "Manual"], value="Preset", label="Model selection")
-            preset = gr.Dropdown(list(MODEL_PRESETS), value="Llama-3.2-1B", label="Model preset (approximate Q4_K_M)")
-            with gr.Row():
-                hf_repo = gr.Textbox(label="HF GGUF repository")
-                hf_file = gr.Textbox(label="HF GGUF filename (header only)")
-            with gr.Accordion("Manual model geometry", open=False), gr.Row():
-                layers = gr.Number(value=16, precision=0, label="Layers")
-                heads = gr.Number(value=8, precision=0, label="KV heads")
-                dim = gr.Number(value=64, precision=0, label="Head dimension")
-                train = gr.Number(value=8192, precision=0, label="Training context")
-                weights = gr.Number(value=0.8, label="Weights (GiB)")
-            device_mode = gr.Radio(["Preset", "Manual"], value="Preset", label="Device selection")
+            target = _model_picker()
+            gr.Markdown("Read the exact GGUF header for model geometry. Tokenizer downloads are best-effort; "
+                        "the build warns if token counts must be estimated.")
+            device_mode = gr.Radio(["Probe this machine", "Preset", "Manual"],
+                                   value="Probe this machine", label="Device selection")
+            probe = gr.Button("Probe")
+            probe_result = gr.Textbox(label="Detected hardware & budget device", interactive=False, lines=4)
             device = gr.Dropdown(list(DEVICE_PRESETS), value="phone-6gb", label="Device preset")
             with gr.Row():
                 ram = gr.Number(value=6, label="Manual total RAM (GiB)")
@@ -313,15 +377,8 @@ def create_app():
                         "Model downloads and inference run on this host, not your phone. "
                         "Draft comparison does not approve a pack or enable export.")
             chat_status = gr.Markdown(_compare_status(None))
-            with gr.Row():
-                source = gr.Radio(["My account", "Recommended", "Search Hub"],
-                                  value="Recommended", label="Source")
-                account_refresh = gr.Button("Refresh")
-                search_query = gr.Textbox(label="Search Hub")
-                search_button = gr.Button("Search Hub")
-            repos = llm.curated_models()
-            chat_repo = gr.Dropdown(repos, value=repos[0], label="GGUF repository")
-            chat_file = gr.Dropdown([], label="GGUF file (Q4_K_M preferred)")
+            chat = _model_picker()
+            chat_repo, chat_file, source = chat["repo"], chat["file"], chat["source"]
             context_info = gr.Markdown("Build a pack first; its context window will be used by default.")
             with gr.Row():
                 chat_ctx = gr.Slider(256, 131072, value=8192, step=1, label="Context window override")
@@ -340,9 +397,14 @@ def create_app():
             with gr.Row():
                 send = gr.Button("Send", variant="primary", interactive=False)
                 clear = gr.Button("Clear")
-        built = build.click(build_handler, [state, urls, names, files, purpose, model_mode, preset, hf_repo,
-            hf_file, layers, heads, dim, train, weights, device_mode, device, ram, available, kv,
-            max_ctx, quality, latency, prefill, strategy, no_mistral, offline, scorton],
+        _wire_model_picker(target, state, "target")
+        _wire_model_picker(chat, state, "compare")
+        demo.load(_picker_files, target["repo"], [target["file"], target["files"]], api_visibility="private")
+        probe.click(probe_handler, outputs=probe_result, api_name="probe")
+        built = build.click(build_handler, [state, urls, names, files, purpose, target["repo"],
+            target["file"], device_mode, device, ram, available, kv,
+            max_ctx, quality, latency, prefill, strategy, no_mistral, offline, scorton,
+            target["source"], target["repos"], target["files"]],
             [state, budget, ram_table, explanation, tokens, safety, preview, audit, review, approve, reject, archive],
             api_name="build", concurrency_id="registry", concurrency_limit=1)
         compare_outputs = [without_chat, with_chat, without_meta, with_meta, question]
@@ -353,19 +415,6 @@ def create_app():
                            state, [chat_status, send], api_visibility="private").success(
                            lambda repo, filename: gr.skip() if filename else files_handler(repo),
                            [chat_repo, chat_file], chat_file, api_visibility="private")
-        source.input(catalog_handler, [source, search_query, state], chat_repo,
-                     api_visibility="private").success(files_handler, chat_repo, chat_file,
-                                                       api_visibility="private")
-        account_refresh.click(lambda session: ("My account", catalog_handler("My account", session=session)),
-                              state, [source, chat_repo], api_visibility="private").success(
-                              files_handler, chat_repo, chat_file, api_visibility="private")
-        search_button.click(lambda query, session: ("Search Hub", catalog_handler("Search Hub", query, session)),
-                            [search_query, state], [source, chat_repo], api_visibility="private").success(
-                            files_handler, chat_repo, chat_file, api_visibility="private")
-        search_query.submit(lambda query, session: ("Search Hub", catalog_handler("Search Hub", query, session)),
-                            [search_query, state], [source, chat_repo], api_visibility="private").success(
-                            files_handler, chat_repo, chat_file, api_visibility="private")
-        chat_repo.input(files_handler, chat_repo, chat_file, api_visibility="private")
         chat_file.change(context_limit_handler, [chat_repo, chat_file, state, chat_ctx],
                          [chat_ctx, context_info], api_visibility="private").success(
                          clear_compare, outputs=compare_outputs, api_visibility="private")

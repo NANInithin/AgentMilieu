@@ -9,6 +9,7 @@ import gradio as gr
 import pytest
 
 from agentmilieu import gpu, llm, web
+from agentmilieu.models import MODEL_PRESETS
 
 
 @pytest.fixture
@@ -16,7 +17,10 @@ def session(monkeypatch, tmp_path):
     monkeypatch.setenv("MILIEU_HOME", str(tmp_path))
     monkeypatch.setattr(web.ui, "load_dotenv", lambda: None)
     monkeypatch.setattr(web, "_training_context", lambda *_: 8192)
-    return web.build_handler(files=["examples/specs.md", "examples/untrusted.md"])[0]
+    monkeypatch.setattr(web.ui, "select_model", lambda **_: MODEL_PRESETS["Llama-3.2-1B"])
+    monkeypatch.setattr(web, "gguf_token_counter", lambda _: None)
+    return web.build_handler(files=["examples/specs.md", "examples/untrusted.md"],
+        hf_repo="bartowski/Llama-3.2-1B-Instruct-GGUF", hf_file="model.gguf", device_mode="Preset")[0]
 
 
 def test_compare_setup_empty_and_built(session):
@@ -28,7 +32,7 @@ def test_compare_setup_empty_and_built(session):
     assert ready[1]["interactive"] is True
     assert ready[2]["value"] == web._session_pack(session)["budget"]["context_window"]
     assert "Llama-3.2-1B" in ready[3]["value"]
-    assert ready[5]["value"] is None
+    assert ready[5]["value"] == "model.gguf"
     assert ready[6:] == ([], [], "", "", "")
     with pytest.raises(gr.Error, match="Build"):
         web.compare_handler(None, "repo", "model.gguf", 4096, .7, 256, .95, "question")
@@ -112,7 +116,9 @@ def test_gpu_registration(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.compare(repo="repo") == {"repo": "repo"}
-    assert decorated == [{"duration": 120}] and invoked == [{"repo": "repo"}]
+    assert decorated == [{"duration": 120}, {"duration": 15}] and invoked == [{"repo": "repo"}]
+    monkeypatch.setattr(gpu.devices, "probe_gpu", lambda: {"error": "No GPU available"})
+    assert module.probe() == {"error": "No GPU available"}
 
     def fail(**kwargs):
         raise ValueError("Model architecture 'k2-horizon' cannot load")

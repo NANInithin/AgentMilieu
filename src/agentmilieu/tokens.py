@@ -1,8 +1,12 @@
-"""Pluggable token counters; no model/tokenizer downloads."""
+"""Pluggable token counting and best-effort Hub tokenizer discovery."""
 
 import math
+import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
+
+from huggingface_hub import HfApi, hf_hub_download
 
 
 class TokenCounter(Protocol):
@@ -30,3 +34,33 @@ class HFTokenCounter:
 
     def count(self, text: str) -> int:
         return len(self.tokenizer.encode(text, add_special_tokens=False).ids)
+
+
+def gguf_token_counter(repo):
+    """Best-effort tokenizer.json lookup; never execute remote tokenizer code."""
+    return _hub_counter(repo, os.getenv("HF_TOKEN") or None)
+
+
+@lru_cache(maxsize=16)
+def _hub_counter(repo, token):
+    def load(candidate):
+        path = hf_hub_download(repo_id=candidate, filename="tokenizer.json", token=token)
+        return HFTokenCounter.from_file(path)
+
+    try:
+        return load(repo)
+    except Exception:  # noqa: BLE001, S110 -- optional lookup must not block builds or log credentials
+        pass
+    try:
+        card = HfApi(token=token).model_info(repo).card_data
+        base = card.get("base_model") if card else None
+        candidates = [base] if isinstance(base, str) else base
+        for candidate in candidates or []:
+            if isinstance(candidate, str):
+                try:
+                    return load(candidate)
+                except Exception:  # noqa: BLE001, S112 -- try the next base without logging credentials
+                    continue
+    except Exception:  # noqa: BLE001, S110 -- gated/missing/offline metadata uses heuristic counting
+        pass
+    return None

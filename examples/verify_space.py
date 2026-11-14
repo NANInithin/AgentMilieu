@@ -14,7 +14,10 @@ def main():
     client = Client("http://127.0.0.1:7860", download_files=home() / "verification-downloads",
                     analytics_enabled=False)
     examples = Path(__file__).resolve().parent
-    result = client.predict(urls="", names="", hf_repo="", hf_file="",
+    client.predict(source="Recommended", query="", api_name="/target_catalog")
+    repo = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+    selection = client.predict(repo=repo, api_name="/target_files")
+    result = client.predict(urls="", names="", hf_repo=repo, hf_file=selection["value"],
         files=[handle_file(str(examples / name)) for name in ("specs.md", "workflow.md", "untrusted.md")],
         purpose="Explain offline use and safe review", offline=True, api_name="/build")
     print("Strategy:", result[2].splitlines()[0])
