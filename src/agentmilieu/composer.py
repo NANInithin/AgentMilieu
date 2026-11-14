@@ -28,7 +28,7 @@ CITATION = re.compile(r"\[(S[\w-]+#c\d+)\]")
 class ComposeOptions:
     rag_ratio: float = 4.0
     retrieval_tokens: int = 1024
-    core_tokens: int = 512
+    core_tokens: int | None = None
     near_duplicate_threshold: float = 0.9
     expand_ratio: float = 0.5
     use_mistral: bool = True
@@ -36,7 +36,8 @@ class ComposeOptions:
 
     def __post_init__(self):
         if (self.strategy not in ("auto", "stuff", "compress", "rag")
-                or self.rag_ratio <= 1 or self.retrieval_tokens < 1 or self.core_tokens < 1
+                or self.rag_ratio <= 1 or self.retrieval_tokens < 1
+                or (self.core_tokens is not None and self.core_tokens < 1)
                 or not 0 < self.near_duplicate_threshold <= 1 or not 0 < self.expand_ratio < 1):
             raise ValueError("Invalid composition limits")
 
@@ -148,7 +149,21 @@ def mistral_summarise(records, purpose, max_tokens):
     return response.choices[0].message.content or ""
 
 
+def _extractive_lines(sentence, citation, limit, counter):
+    target = min(limit, max(32, min(256, limit // 8)))
+    words = []
+    for word in sentence.split():
+        if words and counter.count(f'- {" ".join([*words, word])} [{citation}]') > target:
+            yield f'- {" ".join(words)} [{citation}]'
+            words = []
+        words.append(word)
+    if words:
+        yield f'- {" ".join(words)} [{citation}]'
+
+
 def _compress(records, purpose, limit, counter, summariser):
+    if limit <= 0:
+        return "", set(), 0
     lines, used = [], set()
     split = max(1, len(records) // 2)
     generated = []
@@ -163,11 +178,18 @@ def _compress(records, purpose, limit, counter, summariser):
     query = set(terms(purpose))
     for record in records:
         if record["text"].startswith('{"untrusted_source_text":'):
-            sentences = [record["text"]]
+            sentence_groups.append([f'- {record["text"]} [{record["citation"]}]'])
+            continue
         else:
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", record["text"]) if s.strip()]
+            text = re.sub(r"!?\[((?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]\((?:[^()]|\([^()]*\))*\)",
+                          lambda match: match.group(1), record["text"])
+            text = re.sub(r"\]\((?:[^()]|\([^()]*\))*\)", "", text)
+            text = re.sub(r"\]\(https?://[^\n]*$", "", text)
+            text = re.sub(r"^\s*(?:'[^'\n]*'|\"[^\"\n]*\")\)", "", text)
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
         sentences.sort(key=lambda sentence: -len(query & set(terms(sentence))))
-        sentence_groups.append([f'- {sentence} [{record["citation"]}]' for sentence in sentences])
+        sentence_groups.append([line for sentence in sentences
+                                for line in _extractive_lines(sentence, record["citation"], limit, counter)])
     candidates = [sentences[i] for i in range(max(map(len, sentence_groups), default=0))
                   for sentences in sentence_groups if i < len(sentences)]
     if generated:
@@ -246,8 +268,12 @@ def compose(chunks, budget: BudgetResult, *, sources, purpose="", options=None,
     else:
         if summariser is None and options.use_mistral and os.getenv("MISTRAL_API_KEY"):
             summariser = mistral_summarise
-        limit = min(current.knowledge_budget, options.core_tokens) if strategy == "rag" else current.knowledge_budget
+        limit = current.knowledge_budget
+        if strategy == "rag" and options.core_tokens is not None:
+            limit = min(limit, options.core_tokens)
         knowledge, used, generated = _compress(records, purpose, limit, counter, summariser)
+        explanation.append(f"Static knowledge target={limit} tokens after system, tools, query, "
+                           "generation and retrieval reservations.")
         explanation.append(f"Extractive sentence selection; {generated} citation-valid generated lines considered. "
                            "Citation checks establish source-ID validity, not semantic entailment.")
     included = [{"chunk_id": r["chunk_id"], "reason": "verbatim" if strategy == "stuff" else "cited fact/core"}

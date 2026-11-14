@@ -109,9 +109,9 @@ def test_rag_recomputes_memory_and_token_reserves():
     assert pack.index["chunk_ids"] == [r["chunk_id"] for r in pack.corpus]
     assert pack.budget.config.retrieval_overhead_bytes > 0
     assert pack.token_accounting["retrieval"] == 512
-    assert pack.token_accounting["knowledge"] <= 512
+    assert .7 * pack.budget.knowledge_budget <= pack.token_accounting["knowledge"] <= pack.budget.knowledge_budget
     assert len(pack.tool_schemas) == 3
-    assert pack.excluded and pack.token_accounting["headroom"] >= 0
+    assert pack.included and pack.token_accounting["headroom"] >= 0
 
 
 def test_cannot_fit_and_missing_provenance():
@@ -125,10 +125,46 @@ def test_cannot_fit_and_missing_provenance():
         compose([*report.chunks, *report.chunks], budget, sources=[report.source])
 
 
-@pytest.mark.parametrize("kwargs", [{"rag_ratio": 1}, {"retrieval_tokens": 0}, {"expand_ratio": 2}])
+@pytest.mark.parametrize("kwargs", [{"rag_ratio": 1}, {"retrieval_tokens": 0}, {"expand_ratio": 2},
+                                   {"core_tokens": 0}])
 def test_invalid_options(kwargs):
     with pytest.raises(ValueError):
         ComposeOptions(**kwargs)
+
+
+@pytest.mark.parametrize("strategy", ["rag", "compress"])
+def test_link_heavy_static_knowledge_fills_available_budget(strategy):
+    texts = ["\n".join(
+        f"| District {source}-{i} | [Excavation report {i}]"
+        f"(https://example.org/wiki/Excavation_(district_{source}_{i}) 'Excavation title ({i})') "
+        f"documents {source + i + 100} houses with frescoes and public baths. |"
+        for i in range(100)) for source in range(3)]
+    pack = compose_texts(texts, config=BudgetConfig(max_ctx=4096),
+                         options=ComposeOptions(strategy=strategy, use_mistral=False))
+    assert .7 * pack.budget.knowledge_budget <= pack.token_accounting["knowledge"] <= pack.budget.knowledge_budget
+    assert pack.token_accounting["total"] <= pack.budget.context_window
+    assert "https://" not in pack.knowledge and "Excavation title" not in pack.knowledge
+    assert any("https://" in record["text"] for record in pack.corpus)
+    allowed = {record["citation"] for record in pack.corpus}
+    assert len(valid_fact_lines(pack.knowledge, allowed)) == len(pack.knowledge.splitlines())
+
+
+@pytest.mark.parametrize("strategy", ["rag", "compress"])
+def test_oversized_sentence_is_extracted_in_bounded_cited_fragments(strategy):
+    report = safety_check(Document.create(" ".join(f"District {i} contains public baths and paved streets"
+                                                 for i in range(1000))), size=20000, overlap=0)
+    budget = calculate_budget(MODEL_PRESETS["Llama-3.2-1B"], DEVICE_PRESETS["phone-6gb"],
+                              BudgetConfig(max_ctx=4096))
+    pack = compose(report.chunks, budget, sources=[report.source],
+                   options=ComposeOptions(strategy=strategy, use_mistral=False))
+    assert .7 * pack.budget.knowledge_budget <= pack.token_accounting["knowledge"] <= pack.budget.knowledge_budget
+    assert all(line.endswith(f'[{pack.corpus[0]["citation"]}]') for line in pack.knowledge.splitlines())
+
+
+def test_explicit_rag_core_cap_remains_opt_in():
+    pack = compose_texts(corpus(24), config=BudgetConfig(max_ctx=4096),
+                         options=ComposeOptions(strategy="rag", core_tokens=128, use_mistral=False))
+    assert 0 < pack.token_accounting["knowledge"] <= 128
 
 
 def test_retrieval_budget_math():
