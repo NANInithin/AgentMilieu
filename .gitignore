@@ -11,3 +11,6 @@ dist/
 build/
 *.gguf
 *.cache
+.milieu/
+exports/
+scorton-output/

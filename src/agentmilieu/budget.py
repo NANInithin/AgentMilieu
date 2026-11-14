@@ -23,6 +23,7 @@ class BudgetConfig:
     system_tokens: int = 256
     tool_tokens: int = 0
     query_tokens: int = 128
+    retrieval_tokens: int = 0
     max_new_tokens: int = 512
 
     def __post_init__(self):
@@ -36,7 +37,7 @@ class BudgetConfig:
             if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
         for name in ("compute_buffer_bytes", "retrieval_overhead_bytes", "max_ctx", "quality_cap",
-                     "system_tokens", "tool_tokens", "query_tokens", "max_new_tokens"):
+                     "system_tokens", "tool_tokens", "query_tokens", "retrieval_tokens", "max_new_tokens"):
             value = getattr(self, name)
             if value is None and name not in ("compute_buffer_bytes", "max_ctx", "quality_cap"):
                 raise ValueError(f"{name} must be a non-negative integer")
@@ -92,7 +93,7 @@ def calculate_budget(model: ModelSpec, device: DeviceProfile,
     cold_prefill = context / config.prefill_tok_s
     binding = tuple(key for key, value in constraints.items() if value == context)
     reserved = (config.system_tokens + config.tool_tokens + config.query_tokens
-                + config.max_new_tokens)
+                + config.max_new_tokens + config.retrieval_tokens)
     knowledge = max(0, context - reserved)
     warnings = []
     if free <= 0:
@@ -116,7 +117,8 @@ def calculate_budget(model: ModelSpec, device: DeviceProfile,
         f"Context window={context:,}; binding: {', '.join(binding)}.",
         f"Estimated cold prefill time={cold_prefill:.2f}s at {config.prefill_tok_s:g} tok/s.",
         (f"Reserve system={config.system_tokens}, tools={config.tool_tokens}, "
-         f"query={config.query_tokens}, generation={config.max_new_tokens}; total={reserved:,}."),
+         f"query={config.query_tokens}, retrieval={config.retrieval_tokens}, "
+         f"generation={config.max_new_tokens}; total={reserved:,}."),
         f"Knowledge budget={knowledge:,} tokens.",
         "Recommended llama.cpp flags: " + (" ".join(flags) if flags else "none (infeasible budget)"),
     )
