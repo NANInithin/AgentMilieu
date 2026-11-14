@@ -93,6 +93,22 @@ PATTERNS = {
 }
 
 
+def _iban_spans(text, pattern, allowed):
+    """Yield non-allowlisted IBAN spans, rescanning after the chosen checksum-valid prefix."""
+    pattern, pos = re.compile(pattern), 0
+    while match := pattern.search(text, pos):
+        start, raw = match.start(), match.group()
+        ends = [i for i in range(len(raw), 14, -1)
+                if (i == len(raw) or raw[i] == " ") and _iban(raw[:i])]
+        if not ends:
+            pos = start + 1
+            continue
+        end = next((i for i in ends if "".join(raw[:i].split()).upper() in allowed), ends[0])
+        if "".join(raw[:end].split()).upper() not in allowed:
+            yield start, start + end
+        pos = start + end
+
+
 def _redactions(text, config):
     positions = [i for i, char in enumerate(text) if not INVISIBLE.fullmatch(char)]
     text = "".join(text[i] for i in positions)
@@ -101,6 +117,11 @@ def _redactions(text, config):
     for priority, (kind, pattern) in enumerate(PATTERNS.items()):
         if not config.enabled.get(kind, True):
             continue
+        if kind == "IBAN":
+            for start, end in _iban_spans(text, pattern, allowed_ibans):
+                candidates.append((priority, positions[start], positions[end - 1] + 1, kind,
+                                   text[start:end]))
+            continue
         for match in re.finditer(pattern, text):
             raw = match.group()
             start, end = match.span()
@@ -108,17 +129,6 @@ def _redactions(text, config):
                 raw = match.group(1)
                 start, end = match.span(1)
                 if _entropy(raw) < 3.5:
-                    continue
-            if kind == "IBAN":
-                prefixes = [i for i in range(15, len(raw) + 1)
-                            if i == len(raw) or raw[i] == " "]
-                valid_ends = [i for i in reversed(prefixes) if _iban(raw[:i])]
-                if not valid_ends:
-                    continue
-                valid_end = next((i for i in valid_ends
-                                  if "".join(raw[:i].split()).upper() in allowed_ibans), valid_ends[0])
-                raw, end = raw[:valid_end], start + valid_end
-                if "".join(raw.split()).upper() in allowed_ibans:
                     continue
             if raw in config.allowlist:
                 continue
