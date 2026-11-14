@@ -156,3 +156,14 @@ def test_iban_ambiguous_valid_suffix_prefers_longest():
     redacted, findings = redact_text(text)
     assert redacted == "[REDACTED_IBAN_1]"
     assert any(f.kind == "IBAN" and f.span == (0, len(text)) for f in findings)
+
+
+@pytest.mark.parametrize("allowed", ["GB82 WEST 1234 5698 7654 32", "GB82WEST12345698765432",
+                                     "gb82 west 1234 5698 7654 32", "GB82\tWEST\t1234 5698 7654 32"])
+@pytest.mark.parametrize("suffix", [" USD", " EUR", ""])
+def test_allowlisted_iban_candidate_preserves_currency_suffix(allowed, suffix):
+    iban = "GB82 WEST 1234 5698 7654 32"
+    text = iban + suffix + "; private account: DE93 3704 0044 1000 0000 01"
+    redacted, findings = redact_text(text, RedactionConfig(allowlist=frozenset({allowed})))
+    assert redacted == iban + suffix + "; private account: [REDACTED_IBAN_1]"
+    assert len([f for f in findings if f.kind == "IBAN"]) == 1

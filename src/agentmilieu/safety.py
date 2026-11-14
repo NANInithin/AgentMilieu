@@ -97,6 +97,7 @@ def _redactions(text, config):
     positions = [i for i, char in enumerate(text) if not INVISIBLE.fullmatch(char)]
     text = "".join(text[i] for i in positions)
     candidates = []
+    allowed_ibans = {"".join(value.split()).upper() for value in config.allowlist}
     for priority, (kind, pattern) in enumerate(PATTERNS.items()):
         if not config.enabled.get(kind, True):
             continue
@@ -111,10 +112,14 @@ def _redactions(text, config):
             if kind == "IBAN":
                 prefixes = [i for i in range(15, len(raw) + 1)
                             if i == len(raw) or raw[i] == " "]
-                valid_end = next((i for i in reversed(prefixes) if _iban(raw[:i])), None)
-                if valid_end is None:
+                valid_ends = [i for i in reversed(prefixes) if _iban(raw[:i])]
+                if not valid_ends:
                     continue
+                valid_end = next((i for i in valid_ends
+                                  if "".join(raw[:i].split()).upper() in allowed_ibans), valid_ends[0])
                 raw, end = raw[:valid_end], start + valid_end
+                if "".join(raw.split()).upper() in allowed_ibans:
+                    continue
             if raw in config.allowlist:
                 continue
             if kind == "CREDIT_CARD" and not _luhn(raw):
