@@ -9,6 +9,7 @@ import gradio as gr
 import pytest
 
 from agentmilieu import gpu, llm, web
+from agentmilieu.models import MODEL_PRESETS
 
 
 @pytest.fixture
@@ -16,7 +17,10 @@ def session(monkeypatch, tmp_path):
     monkeypatch.setenv("MILIEU_HOME", str(tmp_path))
     monkeypatch.setattr(web.ui, "load_dotenv", lambda: None)
     monkeypatch.setattr(web, "_training_context", lambda *_: 8192)
-    return web.build_handler(files=["examples/specs.md", "examples/untrusted.md"])[0]
+    monkeypatch.setattr(web.ui, "select_model", lambda **_: MODEL_PRESETS["Llama-3.2-1B"])
+    monkeypatch.setattr(web, "gguf_token_counter", lambda _: None)
+    return web.build_handler(files=["examples/specs.md", "examples/untrusted.md"],
+        hf_repo="bartowski/Llama-3.2-1B-Instruct-GGUF", hf_file="model.gguf", device_mode="Preset")[0]
 
 
 def test_compare_setup_empty_and_built(session):
@@ -28,7 +32,7 @@ def test_compare_setup_empty_and_built(session):
     assert ready[1]["interactive"] is True
     assert ready[2]["value"] == web._session_pack(session)["budget"]["context_window"]
     assert "Llama-3.2-1B" in ready[3]["value"]
-    assert ready[5]["value"] is None
+    assert ready[5]["value"] == "model.gguf"
     assert ready[6:] == ([], [], "", "", "")
     with pytest.raises(gr.Error, match="Build"):
         web.compare_handler(None, "repo", "model.gguf", 4096, .7, 256, .95, "question")
@@ -93,6 +97,27 @@ def test_comparison_updates_both_histories_and_uses_safe_pack(monkeypatch, sessi
     assert web.clear_compare() == ([], [], "", "", "")
 
 
+@pytest.mark.parametrize("real_tokenizer", [False, True])
+def test_comparison_rag_budget_uses_selected_model_tokenizer(monkeypatch, session, real_tokenizer):
+    pack = web._session_pack(session)
+    pack["strategy"], pack["index"] = "rag", {"present": True}
+    pack["token_accounting"]["retrieval"] = 40
+    record = {"citation": "S1#c1", "text": "Retrieved evidence " * 6}
+    monkeypatch.setattr(web, "_session_pack", lambda _: pack)
+    monkeypatch.setattr(llm, "bm25_search", lambda *_args, **_kwargs: [record])
+    counter = SimpleNamespace(count=len) if real_tokenizer else None
+    lookup = Mock(return_value=counter)
+    monkeypatch.setattr(web, "gguf_token_counter", lookup)
+    metadata = {"device": "cpu", **{side: {"prompt_tokens": 40, "generation_seconds": .5}
+                                   for side in ("without_context", "with_context")}}
+    worker = Mock(return_value={"without_context": "plain", "with_context": "cited", "metadata": metadata})
+    monkeypatch.setattr(gpu, "compare", worker)
+    web.compare_handler(session, "different/selected-GGUF", "file", 4096, .7, 256, .95, "evidence?")
+    lookup.assert_called_once_with("different/selected-GGUF")
+    assert (record["text"] in worker.call_args.kwargs["with_system"]) is not real_tokenizer
+    assert "counter" not in worker.call_args.kwargs
+
+
 def test_gpu_registration(monkeypatch):
     decorated, invoked = [], []
 
@@ -112,7 +137,9 @@ def test_gpu_registration(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.compare(repo="repo") == {"repo": "repo"}
-    assert decorated == [{"duration": 120}] and invoked == [{"repo": "repo"}]
+    assert decorated == [{"duration": 120}, {"duration": 15}] and invoked == [{"repo": "repo"}]
+    monkeypatch.setattr(gpu.devices, "probe_gpu", lambda: {"error": "No GPU available"})
+    assert module.probe() == {"error": "No GPU available"}
 
     def fail(**kwargs):
         raise ValueError("Model architecture 'k2-horizon' cannot load")

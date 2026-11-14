@@ -107,7 +107,9 @@ Run `python app.py` and open port **7860**. Sources → Target → Build & Audit
 Review & Export walks through compilation. Start in offline mode, upload the three
 Markdown files in `examples/`, inspect the quarantine/redaction table, try Export
 before approval, Approve locally, then download the approved ZIP. For URLs/topics
-or services, uncheck Offline mode. The integration banner reports configured keys
+or services, uncheck Offline mode. Target model header/tokenizer downloads are allowed
+even in Offline mode; this switch disables external source/services calls, not Hub
+model selection. The integration banner reports configured keys
 and Node availability, **not** service health or a completed audit.
 
 Each browser/API session has server-side `gr.State` and a separate registry under
@@ -140,12 +142,42 @@ isolation is not an authenticated reviewer identity. Local Approve is intentiona
 an unauthenticated demo workflow; do not expose it as an authorization boundary.
 URL ingestion is not SSRF-hardened: restrict network access on shared deployments.
 
+### Target model and device
+
+In **2 · Target**, use the same **My account / Recommended / Search Hub** GGUF
+catalog as Compare. Choose a repository and a file (Q4_K_M is preferred). Target
+reads that exact file's header without downloading its weights; there are no
+preset/manual model-geometry controls in the web app. The CLI retains those modes.
+After a successful build, Compare inherits Target's source, repository/file choices
+and selected values, plus the pack's context window. You can still switch models
+in Compare afterwards.
+
+Token budgeting first tries `tokenizer.json` in the GGUF repository, then the model
+card's `base_model` repository/repositories. Loaded tokenizers are cached and used
+throughout ingestion, composition and the pack's token accounting. Gated/missing
+tokenizers, missing `base_model` or network errors never prevent a build: the budget
+panel instead warns that **token counts are estimated; the with-context prompt may
+exceed the budget**. Chat-template overhead and different runtime tokenizers can
+still differ; Compare checks actual prompt tokens and can grow its context within
+the selected model's training limit.
+
+The device defaults to **Probe this machine**. Click **Probe** before building to
+see GPU VRAM, CPU RAM and which memory pool will determine the budget. GPU probing
+runs only on demand inside a short ZeroGPU worker, using torch then `nvidia-smi` as
+a fallback. If a GPU is detected, the budget uses its total/free **VRAM**, matching
+Compare's full-layer offload; otherwise it uses total/available **CPU RAM** from
+`/proc/meminfo` (or optional psutil). Build probes again so the budget uses a fresh
+snapshot and includes the summary in its explanation. This measures the server,
+not the browser/phone; use **Preset** or **Manual** device settings for a phone
+target instead. Probed memory is a snapshot, not a guarantee against allocation
+failure or other workloads consuming memory later.
+
 ### Compare the same model with and without Milieu context
 
 After building a pack, open **5 · Compare**. Choose **Recommended**, **My account**
 or **Search Hub**, then a GGUF file (Q4_K_M is preferred; split files/projectors
-are excluded). The initial recommendation matches the pack's target preset when
-possible. Ask one shared question: the left assistant has a neutral system prompt;
+are excluded). The initial selection is the exact Target model/file.
+Ask one shared question: the left assistant has a neutral system prompt;
 the right uses the session's redacted/sanitised system prompt and knowledge, plus
 budgeted BM25 retrieval for RAG packs. Draft/pending-review packs are explicitly
 labelled; chatting does not approve a pack or bypass the export gate. Clear removes
@@ -169,7 +201,7 @@ CPU-only host. For local CPU use, install the CPU wheel instead of the Space's
 CUDA requirements:
 
 ```sh
-pip install '.[app,services,ingest,chat]' \
+pip install '.[app,services,ingest,chat,tokenizers]' \
   --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 python app.py
 ```
