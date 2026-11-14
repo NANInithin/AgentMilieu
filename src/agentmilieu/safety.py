@@ -134,7 +134,7 @@ PATTERNS = {
     "EMAIL": r"(?<![\w.+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     "IBAN": r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b",
     "CREDIT_CARD": r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)",
-    "IP": r"(?<![\w:])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![\w:])",
+    "IP": r"(?<![\w:.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![\w:])",
     "PHONE": r"(?<![\w])\+?\d[\d(). -]{6,}\d(?!\w)|(?<!\w)\(\d{3}\)[ .-]*\d{3}[ .-]*\d{4}(?!\w)",
 }
 
@@ -183,7 +183,7 @@ def _redactions(text, config):
                 if re.search(r"\b(?:ISBN(?:-1[03])?|ISSN|DOI)\b[^\d\n]{0,80}$",
                              text[max(0, start - 128):start], re.IGNORECASE):
                     continue
-                if "." in raw and not re.fullmatch(r"\+?(?:\d{1,3}\.)?\d{3}\.\d{3}\.\d{4}", raw):
+                if re.fullmatch(r"[+-]?\d+\.\d+(?:[\s/,°]+[+-]?\d+\.\d+)*", raw):
                     continue
                 if len(digits) == 13 and digits.startswith(("978", "979")):
                     continue

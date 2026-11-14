@@ -53,6 +53,8 @@ def test_luhn_negative_allowlist_flags():
     "Capital:Ab9zQ2mWx7PkLs3nV8cR4tU6", "Monkey:Ab9zQ2mWx7PkLs3nV8cR4tU6",
     "40.75°N 14.4861°E",
     "40.75000 14.4861",
+    "40.75", "14.4861", "40.75 14.4861", "40.75000/14.4861",
+    "40.75000,14.4861", "40.75000°14.4861", "+40.75000 -14.4861",
     "https://en.wikipedia.org/wiki/Special:Map/6/40.75/14.4861/en",
     "https://example.org/Map/6/40.75/14.4861/en",
     "https://example.org/contact/555-123-4567",
@@ -90,7 +92,8 @@ def test_secret_url_parameters_are_redacted(parameter):
 
 
 @pytest.mark.parametrize("phone", ["+33 6 12 34 56 78", "(555) 123-4567", "555-123-4567",
-                                 "+1 415 555 0100", "555.123.4567"])
+                                 "+1 415 555 0100", "555.123.4567", "06.12.34.56.78",
+                                 "+33 6.12.34.56.78", "+1.555.123.4567"])
 def test_real_phone_formats_still_redacted(phone):
     assert redact_text(phone)[0] == "[REDACTED_PHONE_1]"
 
