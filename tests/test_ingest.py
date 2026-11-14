@@ -118,7 +118,7 @@ def test_html_cell_and_block_boundaries():
 
 
 @pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1",
-                                    "fc00::1", "fe80::1", "224.0.0.1", "192.0.2.1", "0.0.0.0"])
+                                    "fc00::1", "fe80::1", "224.0.0.1", "192.0.2.1", "0.0.0.0", "4000::1"])
 def test_fallback_refuses_any_nonpublic_dns_answer(monkeypatch, address):
     monkeypatch.setattr(ingest.socket, "getaddrinfo", lambda *args, **kwargs:
                         [(2, 1, 6, "", ("93.184.216.34", 443)), (2, 1, 6, "", (address, 443))])

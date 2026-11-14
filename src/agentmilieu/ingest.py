@@ -135,12 +135,12 @@ def _validate_url(url, *, resolve=False):
         raise IngestionError("URL contains sensitive data; remove it before external fetching")
     if resolve and os.getenv("MILIEU_ALLOW_PRIVATE_URLS") != "1":
         try:
-            addresses = socket.getaddrinfo(parsed.hostname, parsed.port or
-                                          (443 if parsed.scheme == "https" else 80),
-                                          type=socket.SOCK_STREAM)
-            if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global
-                                    or ipaddress.ip_address(item[4][0]).is_multicast
-                                    for item in addresses):
+            answers = socket.getaddrinfo(parsed.hostname, parsed.port or
+                                        (443 if parsed.scheme == "https" else 80),
+                                        type=socket.SOCK_STREAM)
+            addresses = [ipaddress.ip_address(item[4][0]) for item in answers]
+            if not addresses or any(not address.is_global or address.is_reserved
+                                    or address.is_multicast for address in addresses):
                 raise IngestionError("URL resolves to a non-public address; fetching refused")
         except (OSError, ValueError) as exc:
             if isinstance(exc, IngestionError):
