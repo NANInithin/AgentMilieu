@@ -158,3 +158,27 @@ def test_rag_prompt():
     assert llm.context_prompts(pack, "")[0] == "system\n\nstatic"
     pack["strategy"] = "stuff"
     assert llm.context_prompts(pack, "Battery")[0] == "system\n\nstatic"
+
+
+def test_cuda_preload(monkeypatch, tmp_path):
+    for name in ("cuda_runtime/lib/libcudart.so.12", "cublas/lib/libcublasLt.so.12",
+                 "cublas/lib/libcublas.so.12"):
+        path = tmp_path / "nvidia" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    monkeypatch.setattr(llm.site, "getsitepackages", lambda: [str(tmp_path)])
+    monkeypatch.setattr(llm.site, "getusersitepackages", lambda: str(tmp_path))
+    monkeypatch.setattr(llm, "_CUDA_LIBS", [])
+    loaded = []
+    monkeypatch.setattr(llm.ctypes, "CDLL", lambda path, mode: loaded.append(path) or object())
+    llm._preload_cuda()
+    llm._preload_cuda()
+    assert len(loaded) == 3
+    assert loaded[0].endswith("libcudart.so.12")
+    assert loaded[1].endswith("libcublasLt.so.12")
+
+
+def test_import_error_is_actionable(monkeypatch):
+    monkeypatch.setattr(llm, "_preload_cuda", lambda: (_ for _ in ()).throw(OSError("library")))
+    with pytest.raises(RuntimeError, match="Cannot load llama.cpp"):
+        llm._load("model", 8192, True)

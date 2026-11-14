@@ -1,22 +1,22 @@
 """Hugging Face Gradio Space entrypoint; import does not launch a server."""
 
 import sys
+from asyncio import BaseEventLoop
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from agentmilieu.web import create_app
 
-try:
-    import spaces
-except ImportError:
-    spaces = None
 
-if spaces is not None:
+def unraisable_hook(event):
+    if (event.object is BaseEventLoop.__del__ and type(event.exc_value) is ValueError
+            and str(event.exc_value) == "Invalid file descriptor: -1"):
+        return
+    sys.__unraisablehook__(event)
 
-    @spaces.GPU
-    def _zerogpu_placeholder() -> None:
-        """ZeroGPU Spaces require one @spaces.GPU function; AgentMilieu runs on CPU."""
+
+sys.unraisablehook = unraisable_hook
 
 demo = create_app()
 

@@ -16,4 +16,7 @@ def test_space_requirements_are_standalone_and_include_core_dependencies():
     def name(spec):
         return re.match(r"[\w.-]+", spec)[0].lower().replace("_", "-")
 
-    assert {name(spec) for spec in dependencies} <= {name(spec) for spec in requirements}
+    options = [line for line in requirements if line.startswith("--")]
+    assert all(line.startswith("--extra-index-url https://") for line in options)
+    assert {name(spec) for spec in dependencies} <= {
+        name(spec) for spec in requirements if not spec.startswith("--")}

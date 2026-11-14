@@ -120,7 +120,8 @@ the JSON registry does not support multiple server workers/process writers.
 
 1. Create a **Gradio** Space and upload/sync this repository, including `src/`,
    `pyproject.toml`, `requirements.txt`, `app.py` and this README. YAML above pins the
-   same Gradio version as the app extra. `requirements.txt` installs `.[app,services]`.
+   same Gradio version as the app extra. `requirements.txt` lists standalone runtime
+   dependencies (no local package install) and a Python 3.10 CUDA 12.4 llama.cpp wheel.
 2. Add optional keys as Space **Settings → Variables and secrets**, never source files.
    Add `MILIEU_HOME=/data/milieu` only if persistent storage is enabled; otherwise
    drafts disappear when the container restarts. No system packages are required.
@@ -138,6 +139,51 @@ authentication/network egress controls and upload quotas for production. Session
 isolation is not an authenticated reviewer identity. Local Approve is intentionally
 an unauthenticated demo workflow; do not expose it as an authorization boundary.
 URL ingestion is not SSRF-hardened: restrict network access on shared deployments.
+
+### Compare the same model with and without Milieu context
+
+After building a pack, open **5 · Compare**. Choose **Recommended**, **My account**
+or **Search Hub**, then a GGUF file (Q4_K_M is preferred; split files/projectors
+are excluded). The initial recommendation matches the pack's target preset when
+possible. Ask one shared question: the left assistant has a neutral system prompt;
+the right uses the session's redacted/sanitised system prompt and knowledge, plus
+budgeted BM25 retrieval for RAG packs. Draft/pending-review packs are explicitly
+labelled; chatting does not approve a pack or bypass the export gate. Clear removes
+both conversation histories. Changing the file or building another pack also clears
+the comparison. Model replies are untrusted output, not a safety or quality score.
+
+The context window defaults to the pack budget; an override is capped at the
+selected GGUF's training context when its header is readable. Reduce the history
+or generation limit, or increase the context window if the static pack and question
+do not fit. Older conversation turns are dropped automatically, not pack facts.
+
+For hosted GPU inference select **ZeroGPU** hardware and use Python **3.10**.
+`spaces.GPU(duration=120)` is registered at startup; only serializable prompts,
+histories and settings cross into its GPU worker. The model is loaded lazily and
+cached within that worker. CUDA runtime and cuBLAS Python packages supply the
+libraries absent from the CUDA wheel; the GPU worker must supply `libcuda.so.1`.
+Import/inference errors appear in the UI without preventing compilation/review.
+There is no GPU access outside the decorated worker. Actual ZeroGPU execution
+depends on the Space's hardware/quota; a CUDA wheel may not even import on a
+CPU-only host. For local CPU use, install the CPU wheel instead of the Space's
+CUDA requirements:
+
+```sh
+pip install '.[app,services,ingest,chat]' \
+  --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+python app.py
+```
+
+Optional Space variables/secrets:
+- `MILIEU_HF_AUTHOR`: owner whose GGUF repositories populate **My account**;
+  falls back to the automatic `SPACE_AUTHOR_NAME` variable.
+- `HF_TOKEN` (**secret**): Hub read token for private repositories and downloads.
+- `MILIEU_MAX_GGUF_GB`: maximum GGUF size in GiB, default **4**. Large models can
+  exhaust host/GPU RAM even below this cap.
+
+Comparison requires a locally cached model or a Hub download, even when the pack
+was built in offline mode. On a hosted Space inference runs on the host, **not** on
+the user's phone; avoid sensitive questions/documents in public demos.
 
 ## Python API
 

@@ -1,8 +1,10 @@
 """Optional, worker-local GGUF comparison backend. No GPU or model imports at startup."""
 
+import ctypes
 import math
 import os
 import re
+import site
 import threading
 import time
 from dataclasses import asdict, is_dataclass
@@ -16,6 +18,7 @@ from .tokens import HeuristicTokenCounter
 NEUTRAL_PROMPT = "You are a helpful assistant. Answer clearly and concisely."
 _MODELS = {}
 _LOCK = threading.Lock()
+_CUDA_LIBS = []
 _CURATED = [
     "bartowski/Llama-3.2-1B-Instruct-GGUF",
     "bartowski/Llama-3.2-3B-Instruct-GGUF",
@@ -99,9 +102,29 @@ def context_prompts(pack, question, *, top_k=3, counter=None):
     return prompt, NEUTRAL_PROMPT
 
 
+def _preload_cuda():
+    if _CUDA_LIBS:
+        return
+    roots = [Path(root) / "nvidia" for root in [*site.getsitepackages(), site.getusersitepackages()]]
+    loaded = []
+    for pattern in ("cuda_runtime/lib/libcudart.so.12", "cublas/lib/libcublasLt.so.12",
+                    "cublas/lib/libcublas.so.12"):
+        for root in roots:
+            library = root / pattern
+            if library.is_file():
+                loaded.append(ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL))
+                break
+    _CUDA_LIBS.extend(loaded)
+
+
 def _load(path, n_ctx, gpu):
-    import llama_cpp
-    from llama_cpp.llama_chat_format import Jinja2ChatFormatter
+    try:
+        _preload_cuda()
+        import llama_cpp
+        from llama_cpp.llama_chat_format import Jinja2ChatFormatter
+    except (ImportError, OSError, RuntimeError) as exc:
+        raise RuntimeError("Cannot load llama.cpp. Locally install the chat extra with a CPU wheel; "
+                           "on Spaces check the CUDA runtime, cuBLAS and GPU worker driver.") from exc
 
     use_gpu = gpu and bool(llama_cpp.llama_supports_gpu_offload())
     for device in (["gpu", "cpu"] if use_gpu else ["cpu"]):
