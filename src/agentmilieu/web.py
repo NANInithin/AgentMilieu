@@ -228,7 +228,8 @@ def compare_handler(session, repo, filename, n_ctx, temperature, max_tokens, top
         if cap and n_ctx > cap:
             raise ValueError(f"Context override exceeds the selected model's training context ({cap})")
         # Prompts come only from the session's safety-processed registry payload.
-        with_system, without_system = llm.context_prompts(pack, question.strip())
+        with_system, without_system = llm.context_prompts(
+            pack, question.strip(), counter=gguf_token_counter(repo))
         without = _text_history(without_history) + [{"role": "user", "content": question.strip()}]
         with_context = _text_history(with_history) + [{"role": "user", "content": question.strip()}]
         result = gpu.compare(repo=repo, filename=filename, n_ctx=int(n_ctx),
