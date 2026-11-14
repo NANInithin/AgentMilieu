@@ -158,7 +158,10 @@ def _compress(records, purpose, limit, counter, summariser):
     sentence_groups = []
     query = set(terms(purpose))
     for record in records:
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", record["text"]) if s.strip()]
+        if record["text"].startswith('{"untrusted_source_text":'):
+            sentences = [record["text"]]
+        else:
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", record["text"]) if s.strip()]
         sentences.sort(key=lambda sentence: -len(query & set(terms(sentence))))
         sentence_groups.append([f'- {sentence} [{record["citation"]}]' for sentence in sentences])
     candidates = [sentences[i] for i in range(max(map(len, sentence_groups), default=0))
