@@ -60,3 +60,23 @@ def test_tokenizer_network_failure_falls_back(monkeypatch):
     monkeypatch.setattr(tokens, "hf_hub_download", fail)
     monkeypatch.setattr(tokens, "HfApi", fail)
     assert tokens.gguf_token_counter("owner/gguf") is None
+
+
+@pytest.mark.parametrize("failure", ["download", "tokenizer"])
+def test_transient_failure_is_retried_and_only_success_is_cached(monkeypatch, failure):
+    counter = object()
+    download = Mock(return_value="tokenizer.json")
+    load = Mock(return_value=counter)
+    if failure == "download":
+        download.side_effect = [OSError("Hub unavailable"), "tokenizer.json"]
+    else:
+        load.side_effect = [ValueError("invalid tokenizer"), counter]
+    monkeypatch.setattr(tokens, "hf_hub_download", download)
+    monkeypatch.setattr(tokens.HFTokenCounter, "from_file", load)
+    monkeypatch.setattr(tokens, "HfApi", Mock(side_effect=OSError("metadata unavailable")))
+    assert tokens.gguf_token_counter("owner/gguf") is None
+    assert tokens._hub_counter.cache_info().currsize == 0
+    assert tokens.gguf_token_counter("owner/gguf") is counter
+    assert tokens.gguf_token_counter("owner/gguf") is counter
+    assert download.call_count == 2
+    assert tokens._hub_counter.cache_info().currsize == 1

@@ -36,9 +36,16 @@ class HFTokenCounter:
         return len(self.tokenizer.encode(text, add_special_tokens=False).ids)
 
 
+class _TokenizerUnavailable(Exception):
+    """Discovery did not produce a cacheable counter."""
+
+
 def gguf_token_counter(repo):
     """Best-effort tokenizer.json lookup; never execute remote tokenizer code."""
-    return _hub_counter(repo, os.getenv("HF_TOKEN") or None)
+    try:
+        return _hub_counter(repo, os.getenv("HF_TOKEN") or None)
+    except _TokenizerUnavailable:
+        return None
 
 
 @lru_cache(maxsize=16)
@@ -63,4 +70,4 @@ def _hub_counter(repo, token):
                     continue
     except Exception:  # noqa: BLE001, S110 -- gated/missing/offline metadata uses heuristic counting
         pass
-    return None
+    raise _TokenizerUnavailable
