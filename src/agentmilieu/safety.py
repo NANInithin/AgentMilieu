@@ -108,11 +108,16 @@ def _redactions(text, config):
                 start, end = match.span(1)
                 if _entropy(raw) < 3.5:
                     continue
+            if kind == "IBAN":
+                prefixes = [i for i in range(15, len(raw) + 1)
+                            if i == len(raw) or raw[i] == " "]
+                valid_end = next((i for i in prefixes if _iban(raw[:i])), None)
+                if valid_end is None:
+                    continue
+                raw, end = raw[:valid_end], start + valid_end
             if raw in config.allowlist:
                 continue
             if kind == "CREDIT_CARD" and not _luhn(raw):
-                continue
-            if kind == "IBAN" and not _iban(raw):
                 continue
             if kind == "PHONE":
                 digits = re.sub(r"\D", "", raw)
