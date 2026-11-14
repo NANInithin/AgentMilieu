@@ -76,10 +76,14 @@ def runtime(monkeypatch, tmp_path, hub):
 
     class Model:
         def __init__(self, **kwargs):
+            self.closed = False
             self.metadata = {"tokenizer.chat_template": "template"}
             loads.append(kwargs)
             if kwargs["n_gpu_layers"] == -1:
                 raise RuntimeError("GPU unavailable")
+
+        def close(self):
+            self.closed = True
 
         def detokenize(self, *args, **kwargs):
             return b""
@@ -144,6 +148,17 @@ def test_inference_errors(runtime):
         llm.compare_chat("repo", "mmproj.gguf", **args)
     with pytest.raises(ValueError, match="sampling"):
         llm.compare_chat("repo", "small.gguf", **{**args, "max_tokens": 16})
+
+
+def test_cache_evicts_previous_model(runtime):
+    first, _, _ = llm._load("first", 1024, False)
+    assert llm._load("first", 1024, False)[0] is first
+    assert not first.closed
+    second, _, _ = llm._load("second", 1024, False)
+    assert first.closed and not second.closed
+    third, _, _ = llm._load("second", 2048, False)
+    assert second.closed and not third.closed
+    assert len(llm._MODELS) == 1
 
 
 def test_rag_prompt():

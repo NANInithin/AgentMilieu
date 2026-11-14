@@ -127,10 +127,16 @@ def _load(path, n_ctx, gpu):
                            "on Spaces check the CUDA runtime, cuBLAS and GPU worker driver.") from exc
 
     use_gpu = gpu and bool(llama_cpp.llama_supports_gpu_offload())
-    for device in (["gpu", "cpu"] if use_gpu else ["cpu"]):
+    devices = ["gpu", "cpu"] if use_gpu else ["cpu"]
+    for device in devices:
         key = (path, n_ctx, device)
         if key in _MODELS:
             return (*_MODELS[key], device)
+    while _MODELS:
+        _, (previous, _) = _MODELS.popitem()
+        previous.close()
+    for device in devices:
+        key = (path, n_ctx, device)
         try:
             model = llama_cpp.Llama(model_path=path, n_ctx=n_ctx,
                                     n_gpu_layers=-1 if device == "gpu" else 0, verbose=False)
