@@ -1,3 +1,4 @@
+import struct
 import sys
 from types import SimpleNamespace
 
@@ -77,6 +78,7 @@ def runtime(monkeypatch, tmp_path, hub):
     class Model:
         def __init__(self, **kwargs):
             self.closed = False
+            self._model = SimpleNamespace(n_ctx_train=lambda: 24)
             self.metadata = {"tokenizer.chat_template": "template"}
             loads.append(kwargs)
             if kwargs["n_gpu_layers"] == -1:
@@ -147,7 +149,7 @@ def test_inference_errors(runtime):
     with pytest.raises(ValueError, match="missing"):
         llm.compare_chat("repo", "mmproj.gguf", **args)
     with pytest.raises(ValueError, match="sampling"):
-        llm.compare_chat("repo", "small.gguf", **{**args, "max_tokens": 16})
+        llm.compare_chat("repo", "small.gguf", **{**args, "max_tokens": 0})
 
 
 def test_cache_evicts_previous_model(runtime):
@@ -203,6 +205,63 @@ def test_unrelated_completion_error_is_not_retried(runtime, monkeypatch):
     with pytest.raises(ValueError, match="unrelated failure"):
         llm.compare_chat("repo", "small.gguf", n_ctx=24, max_tokens=8,
                          with_system="context", with_history=history, without_history=history)
+
+
+def test_load_error_reports_architecture_and_both_attempts(runtime, tmp_path, monkeypatch):
+    def string(value):
+        raw = value.encode()
+        return struct.pack("<Q", len(raw)) + raw
+
+    path = tmp_path / "unsupported.gguf"
+    path.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 0, 1)
+                     + string("general.architecture") + struct.pack("<I", 8)
+                     + string("k2-horizon"))
+    attempts = []
+
+    def fail(**kwargs):
+        attempts.append(kwargs["n_gpu_layers"])
+        raise ValueError("Failed to load model from file")
+
+    monkeypatch.setattr(sys.modules["llama_cpp"], "Llama", fail)
+    monkeypatch.setattr(sys.modules["llama_cpp"], "__version__", "0.3.19", raising=False)
+    with pytest.raises(ValueError, match="k2-horizon") as error:
+        llm._load(str(path), 8192, True)
+    assert attempts == [-1, 0]
+    assert "0.3.19" in str(error.value)
+    assert "pick another model" in str(error.value)
+    assert "gpu: Failed to load model" in str(error.value)
+    assert "cpu: Failed to load model" in str(error.value)
+
+
+@pytest.mark.parametrize("training,expected,max_tokens", [(4096, 2048, 8), (1500, 1500, 8),
+                                                        (4096, 3072, 1200)])
+def test_context_grows_to_fit_both_sides(runtime, monkeypatch, training, expected, max_tokens):
+    loads, _ = runtime
+    cls = sys.modules["llama_cpp"].Llama
+    original_init = cls.__init__
+    models = []
+
+    def init(self, **kwargs):
+        original_init(self, **kwargs)
+        self._model = SimpleNamespace(n_ctx_train=lambda: training)
+        models.append(self)
+
+    monkeypatch.setattr(cls, "__init__", init)
+    history = [{"role": "user", "content": "question"}]
+    result = llm.compare_chat("repo", "small.gguf", n_ctx=1024, max_tokens=max_tokens, gpu=False,
+                              with_system="fact " * 1200, with_history=history,
+                              without_history=history)
+    assert result["metadata"]["n_ctx"] == expected
+    assert [load["n_ctx"] for load in loads] == [1024, expected]
+    assert models[0].closed and not models[1].closed
+    assert result["with_context"] == result["without_context"] == "reply"
+
+
+def test_context_cannot_grow_past_training(runtime):
+    history = [{"role": "user", "content": "question"}]
+    with pytest.raises(ValueError, match="training context 24"):
+        llm.compare_chat("repo", "small.gguf", n_ctx=16, max_tokens=8, gpu=False,
+                         with_system="fact " * 30, with_history=history, without_history=history)
 
 
 def test_rag_prompt():
