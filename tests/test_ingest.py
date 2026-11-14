@@ -18,6 +18,9 @@ from agentmilieu.documents import Document, chunk_document
 def offline_env(monkeypatch):
     monkeypatch.delenv("CONTEXT_DEV_API_KEY", raising=False)
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("MILIEU_ALLOW_PRIVATE_URLS", raising=False)
+    monkeypatch.setattr(ingest.socket, "getaddrinfo", lambda *args, **kwargs:
+                        [(2, 1, 6, "", ("93.184.216.34", 443))])
 
 
 @pytest.mark.parametrize("suffix,content,expected", [
@@ -95,11 +98,56 @@ def test_empty_file(tmp_path):
 
 
 def test_url_fallback(monkeypatch):
-    get = Mock(return_value=NS(text="<h1>Fallback</h1><p>Content</p>", raise_for_status=Mock()))
+    get = Mock(return_value=NS(text="<h1>Fallback</h1><p>Content</p>", raise_for_status=Mock(),
+                               status_code=200, close=Mock()))
     monkeypatch.setattr(ingest.requests, "get", get)
     doc = ingest.ingest_url("https://example.com")
     assert doc.fallback and "Fallback" in doc.text
-    get.assert_called_once_with("https://example.com", timeout=20)
+    get.assert_called_once_with("https://example.com", timeout=20, allow_redirects=False)
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1",
+                                    "fc00::1", "fe80::1", "224.0.0.1", "192.0.2.1", "0.0.0.0"])
+def test_fallback_refuses_any_nonpublic_dns_answer(monkeypatch, address):
+    monkeypatch.setattr(ingest.socket, "getaddrinfo", lambda *args, **kwargs:
+                        [(2, 1, 6, "", ("93.184.216.34", 443)), (2, 1, 6, "", (address, 443))])
+    get = Mock()
+    monkeypatch.setattr(ingest.requests, "get", get)
+    with pytest.raises(ingest.IngestionError, match="non-public"):
+        ingest.ingest_url("https://example.com")
+    get.assert_not_called()
+
+
+def test_redirect_hops_are_revalidated_and_bounded(monkeypatch):
+    get = Mock(return_value=NS(status_code=302, headers={"Location": "http://localhost/"}, close=Mock()))
+    monkeypatch.setattr(ingest.requests, "get", get)
+    monkeypatch.setattr(ingest.socket, "getaddrinfo", lambda host, *args, **kwargs:
+                        [(2, 1, 6, "", ("127.0.0.1" if host == "localhost" else "93.184.216.34", 80))])
+    with pytest.raises(ingest.IngestionError, match="non-public"):
+        ingest.ingest_url("https://example.com")
+    assert get.call_count == 1
+    monkeypatch.setenv("MILIEU_ALLOW_PRIVATE_URLS", "1")
+    get.reset_mock()
+    with pytest.raises(ingest.IngestionError, match="five hops"):
+        ingest.ingest_url("http://localhost/")
+    assert get.call_count == 6
+    get.side_effect = [NS(status_code=302, headers={"Location": "/next"}, close=Mock()),
+                       NS(status_code=200, text="Local development", raise_for_status=Mock(), close=Mock())]
+    assert ingest.ingest_url("http://127.0.0.1/").text == "Local development"
+    assert get.call_args.args[0] == "http://127.0.0.1/next"
+
+
+def test_dns_failure_and_redirect_scheme_fail_closed(monkeypatch):
+    get = Mock()
+    monkeypatch.setattr(ingest.requests, "get", get)
+    monkeypatch.setattr(ingest.socket, "getaddrinfo", Mock(side_effect=OSError("DNS unavailable")))
+    with pytest.raises(ingest.IngestionError, match="validate URL"):
+        ingest.ingest_url("https://example.com")
+    get.assert_not_called()
+    monkeypatch.setenv("MILIEU_ALLOW_PRIVATE_URLS", "1")
+    get.return_value = NS(status_code=302, headers={"Location": "file:///etc/passwd"}, close=Mock())
+    with pytest.raises(ingest.IngestionError, match=r"http\(s\)"):
+        ingest.ingest_url("http://localhost/")
 
 
 def test_sdk_url_and_research(monkeypatch):

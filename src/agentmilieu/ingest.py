@@ -2,10 +2,12 @@
 
 import csv
 import io
+import ipaddress
 import os
+import socket
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -114,17 +116,53 @@ def _context_client():
     return ContextDev(api_key=key, timeout=30.0, max_retries=0)
 
 
-def _safe_outbound(text):
-    from .safety import redact_text
-    return redact_text(text)[0]
+def _safe_outbound(text, *, url=False):
+    from .safety import RedactionConfig, redact_text
+    return redact_text(text, RedactionConfig(enabled={"IP": False}) if url else None)[0]
 
 
-def ingest_url(url: str, *, client=None, source_type="url") -> Document:
+def _validate_url(url, *, resolve=False):
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username:
         raise IngestionError("Expected an http(s) URL without credentials")
-    if _safe_outbound(url) != url:
+    if _safe_outbound(url, url=True) != url:
         raise IngestionError("URL contains sensitive data; remove it before external fetching")
+    if resolve and os.getenv("MILIEU_ALLOW_PRIVATE_URLS") != "1":
+        try:
+            addresses = socket.getaddrinfo(parsed.hostname, parsed.port or
+                                          (443 if parsed.scheme == "https" else 80),
+                                          type=socket.SOCK_STREAM)
+            if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global
+                                    or ipaddress.ip_address(item[4][0]).is_multicast
+                                    for item in addresses):
+                raise IngestionError("URL resolves to a non-public address; fetching refused")
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, IngestionError):
+                raise
+            raise IngestionError("Cannot validate URL host addresses; fetching refused") from exc
+
+
+def _http_text(url):
+    for hop in range(6):
+        _validate_url(url, resolve=True)
+        response = requests.get(url, timeout=20, allow_redirects=False)
+        try:
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get("Location")
+                if not location or hop == 5:
+                    raise IngestionError("URL redirect missing Location or exceeded five hops")
+                url = urljoin(url, location)
+                continue
+            if 300 <= response.status_code < 400:
+                raise IngestionError("Unsupported URL redirect response")
+            response.raise_for_status()
+            return html_to_text(response.text)
+        finally:
+            response.close()
+
+
+def ingest_url(url: str, *, client=None, source_type="url") -> Document:
+    _validate_url(url)
     client = client if client is not None else _context_client()
     try:
         if client is not None:
@@ -134,9 +172,7 @@ def ingest_url(url: str, *, client=None, source_type="url") -> Document:
                 raise IngestionError("Context.dev did not return Markdown")
             text, title = page.markdown.data, getattr(page.metadata, "title", None) or url
         else:
-            response = requests.get(url, timeout=20)
-            response.raise_for_status()
-            text, title = html_to_text(response.text), url
+            text, title = _http_text(url), url
     except IngestionError:
         raise
     except Exception as exc:
