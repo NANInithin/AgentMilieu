@@ -157,7 +157,19 @@ def _load(path, n_ctx, gpu):
         return model, formatter, device
 
 
-def _messages(model, formatter, system, history, n_ctx, max_tokens):
+def _system_role_error(exc):
+    return bool(re.search(r"system (?:role|messages?).*(?:not supported|unsupported)",
+                          str(exc), re.IGNORECASE))
+
+
+def _merge_system(messages):
+    merged = [dict(message) for message in messages[1:]]
+    first_user = next(message for message in merged if message["role"] == "user")
+    first_user["content"] = messages[0]["content"] + "\n\n" + first_user["content"]
+    return merged
+
+
+def _messages(model, formatter, system, history, n_ctx, max_tokens, *, merge_system=False):
     messages = [{"role": "system", "content": system}]
     for message in history:
         if message.get("role") not in ("user", "assistant") or not isinstance(
@@ -167,11 +179,18 @@ def _messages(model, formatter, system, history, n_ctx, max_tokens):
     if len(messages) == 1 or messages[-1]["role"] != "user":
         raise ValueError("History must end with the latest user question")
     while True:
-        rendered = formatter(messages=messages)
+        candidate = _merge_system(messages) if merge_system else messages
+        try:
+            rendered = formatter(messages=candidate)
+        except ValueError as exc:
+            if merge_system or not _system_role_error(exc):
+                raise
+            merge_system = True
+            continue
         count = len(model.tokenize(rendered.prompt.encode("utf-8"),
                                    add_bos=not rendered.added_special, special=True))
         if count + max_tokens <= n_ctx:
-            return messages
+            return candidate
         if len(messages) <= 2:
             raise ValueError("System prompt and latest question exceed the context window")
         del messages[1]
@@ -200,13 +219,22 @@ def compare_chat(repo, filename, *, n_ctx, with_system, without_system=NEUTRAL_P
         model, formatter, device = _load(path, n_ctx, gpu)
         sides = [("with_context", with_system, with_history),
                  ("without_context", without_system, without_history)]
-        prepared = [(side, _messages(model, formatter, system, history, n_ctx, max_tokens))
+        prepared = [(side, system, history,
+                     _messages(model, formatter, system, history, n_ctx, max_tokens))
                     for side, system, history in sides]
         result = {"metadata": {"device": device}}
-        for side, messages in prepared:
+        for side, system, history, messages in prepared:
             start = time.perf_counter()
-            completion = model.create_chat_completion(
-                messages=messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p)
+            try:
+                completion = model.create_chat_completion(
+                    messages=messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p)
+            except ValueError as exc:
+                if not _system_role_error(exc) or messages[0]["role"] != "system":
+                    raise
+                messages = _messages(model, formatter, system, history, n_ctx, max_tokens,
+                                     merge_system=True)
+                completion = model.create_chat_completion(
+                    messages=messages, temperature=temperature, max_tokens=max_tokens, top_p=top_p)
             result[side] = completion["choices"][0]["message"]["content"] or ""
             result["metadata"][side] = {
                 "prompt_tokens": completion["usage"]["prompt_tokens"],

@@ -161,6 +161,50 @@ def test_cache_evicts_previous_model(runtime):
     assert len(llm._MODELS) == 1
 
 
+@pytest.mark.parametrize("reject_at", ["formatter", "completion"])
+def test_system_role_fallback(runtime, monkeypatch, reject_at):
+    _, requests = runtime
+    model_class = sys.modules["llama_cpp"].Llama
+    formatter_class = sys.modules["llama_cpp.llama_chat_format"].Jinja2ChatFormatter
+    original_completion = model_class.create_chat_completion
+    original_formatter = formatter_class.__call__
+
+    def completion(self, **kwargs):
+        if reject_at == "completion" and kwargs["messages"][0]["role"] == "system":
+            raise ValueError("System role not supported")
+        return original_completion(self, **kwargs)
+
+    def formatter(self, messages):
+        if reject_at == "formatter" and messages[0]["role"] == "system":
+            raise ValueError("System role not supported")
+        return original_formatter(self, messages)
+
+    monkeypatch.setattr(model_class, "create_chat_completion", completion)
+    monkeypatch.setattr(formatter_class, "__call__", formatter)
+    history = [{"role": "user", "content": "old " * 40},
+               {"role": "assistant", "content": "old reply"},
+               {"role": "user", "content": "latest question"}]
+    result = llm.compare_chat("repo", "small.gguf", n_ctx=24, max_tokens=8,
+                              with_system="safe context", without_system="neutral assistant",
+                              with_history=history, without_history=history)
+    assert result["with_context"] == result["without_context"] == "reply"
+    assert len(requests) == 2
+    assert requests[0]["messages"] == [{"role": "user", "content": "safe context\n\nlatest question"}]
+    assert requests[1]["messages"] == [{"role": "user", "content": "neutral assistant\n\nlatest question"}]
+    assert len(history) == 3 and history[-1]["content"] == "latest question"
+
+
+def test_unrelated_completion_error_is_not_retried(runtime, monkeypatch):
+    def fail(self, **kwargs):
+        raise ValueError("unrelated failure")
+
+    monkeypatch.setattr(sys.modules["llama_cpp"].Llama, "create_chat_completion", fail)
+    history = [{"role": "user", "content": "question"}]
+    with pytest.raises(ValueError, match="unrelated failure"):
+        llm.compare_chat("repo", "small.gguf", n_ctx=24, max_tokens=8,
+                         with_system="context", with_history=history, without_history=history)
+
+
 def test_rag_prompt():
     records = [{"chunk_id": "S1.C1", "citation": "S1#c1", "text": "Battery lasts ten hours."},
                {"chunk_id": "S1.C2", "citation": "S1#c2", "text": "UNTRUSTED " * 100}]
