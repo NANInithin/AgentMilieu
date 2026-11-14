@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["typer>=0.12", "gguf>=0.10", "huggingface_hub>=0.25", "requests>=2.25", "rank-bm25>=0.2.2", "mcp>=1.9,<2", "python-dotenv"]
 
 [project.optional-dependencies]
+chat = ["llama-cpp-python>=0.3"]
 dev = ["pytest>=8", "ruff>=0.9", "reportlab", "pypdf", "python-docx", "openpyxl", "python-pptx"]
 ingest = ["pypdf", "python-docx", "openpyxl", "python-pptx"]
 tokenizers = ["tokenizers>=0.20"]
