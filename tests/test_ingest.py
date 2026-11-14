@@ -106,6 +106,17 @@ def test_url_fallback(monkeypatch):
     get.assert_called_once_with("https://example.com", timeout=20, allow_redirects=False)
 
 
+def test_html_cell_and_block_boundaries():
+    text = ingest.html_to_text("<table><tr><th>A</th><th>B</th></tr>"
+                               "<tr><td>10</td><td>20</td></tr></table>")
+    assert "A\tB" in text and "10\t20" in text and "1020" not in text
+    for tag in ("p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6"):
+        text = ingest.html_to_text(f"<{tag}>first</{tag}><{tag}>second</{tag}>")
+        assert text.split() == ["first", "second"]
+    assert ingest.html_to_text("first<br>second").splitlines() == ["first", "second"]
+    assert ingest.html_to_text("") == ""
+
+
 @pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1",
                                     "fc00::1", "fe80::1", "224.0.0.1", "192.0.2.1", "0.0.0.0"])
 def test_fallback_refuses_any_nonpublic_dns_answer(monkeypatch, address):

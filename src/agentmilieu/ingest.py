@@ -19,6 +19,10 @@ class IngestionError(ValueError):
 
 
 class _HTMLText(HTMLParser):
+    blocks = frozenset(("p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
+                        "table", "ul", "ol", "dl", "dt", "dd", "blockquote", "pre",
+                        "section", "article", "header", "footer"))
+
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts = []
@@ -27,13 +31,15 @@ class _HTMLText(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style"):
             self.ignored += 1
-        if tag in ("p", "div", "br", "h1", "h2", "li", "tr"):
+        if tag in self.blocks or tag in ("br", "hr"):
             self.parts.append("\n")
 
     def handle_endtag(self, tag):
         if tag in ("script", "style"):
             self.ignored = max(0, self.ignored - 1)
-        if tag in ("p", "div", "h1", "h2", "li", "tr"):
+        if tag in ("td", "th"):
+            self.parts.append("\t")
+        if tag in self.blocks:
             self.parts.append("\n")
 
     def handle_data(self, data):
