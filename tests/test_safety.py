@@ -50,6 +50,7 @@ def test_luhn_negative_allowlist_flags():
     "File:Pompeii_Forum_Basilica_entrance.jpg",
     "Special:BookSources/9780199602353",
     "title=Ab9zQ2mWx7PkLs3nV8cR4tU6",
+    "Capital:Ab9zQ2mWx7PkLs3nV8cR4tU6", "Monkey:Ab9zQ2mWx7PkLs3nV8cR4tU6",
     "40.75°N 14.4861°E",
     "40.75000 14.4861",
     "https://en.wikipedia.org/wiki/Special:Map/6/40.75/14.4861/en",
@@ -67,7 +68,8 @@ def test_reference_material_is_not_redacted(text):
 
 
 @pytest.mark.parametrize("key", ["api_key", "SECRET_TOKEN", "password", "pwd", "Authorization",
-                               "credential", "bearer", "session_id", "private", "access"])
+                               "credential", "bearer", "session_id", "private", "access",
+                               "apiKey", "APIKey", "X-Auth-Token", "private.key"])
 def test_secret_bearing_assignments_still_redacted(key):
     value = "Ab9zQ2mWx7PkLs3nV8cR4tU6"
     text = f'{key} = "{value}"' if key != "SECRET_TOKEN" else f"{key}: {value}"
@@ -75,6 +77,16 @@ def test_secret_bearing_assignments_still_redacted(key):
     assert value not in cleaned
     assert "[REDACTED_GENERIC_SECRET_1]" in cleaned
     assert [finding.kind for finding in findings] == ["GENERIC_SECRET"]
+
+
+@pytest.mark.parametrize("parameter", ["?api_key=", "?page=1&access_token=", "#apiKey=",
+                                     "?page=1;X-Auth-Token=", "?private.key="])
+def test_secret_url_parameters_are_redacted(parameter):
+    value = "Ab9zQ2mWx7PkLs3nV8cR4tU6"
+    prefix = "https://api.example.com/v1" + parameter
+    cleaned, findings = redact_text(prefix + value + "&page=2")
+    assert cleaned == prefix + "[REDACTED_GENERIC_SECRET_1]&page=2"
+    assert [finding.span for finding in findings] == [(len(prefix), len(prefix) + len(value))]
 
 
 @pytest.mark.parametrize("phone", ["+33 6 12 34 56 78", "(555) 123-4567", "555-123-4567",

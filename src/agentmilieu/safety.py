@@ -114,6 +114,15 @@ def _entropy(text):
     return -sum((n / len(text)) * math.log2(n / len(text)) for n in Counter(text).values())
 
 
+def _secret_key(name):
+    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    segments = set(re.split(r"[_ .-]+", name.casefold()))
+    return bool(segments & {"key", "token", "secret", "password", "passwd", "passw", "pwd",
+                            "passphrase", "auth", "authorization", "authentication", "credential",
+                            "credentials", "api", "bearer", "session", "private", "access"})
+
+
 PATTERNS = {
     "PRIVATE_KEY": r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----",
     "JWT": r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
@@ -121,7 +130,7 @@ PATTERNS = {
     "GITHUB_TOKEN": r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b",
     "SK_KEY": r"\bsk-[A-Za-z0-9_-]{16,}\b",
     "SLACK_TOKEN": r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b",
-    "GENERIC_SECRET": r"\b([A-Za-z_][\w-]{1,50})\s*[:=]\s*[\"']?([A-Za-z0-9_+/=-]{20,})",
+    "GENERIC_SECRET": r"\b([A-Za-z_][\w.-]{1,50})\s*[:=]\s*[\"']?([A-Za-z0-9_+/=-]{20,})",
     "EMAIL": r"(?<![\w.+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     "IBAN": r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b",
     "CREDIT_CARD": r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)",
@@ -152,11 +161,14 @@ def _redactions(text, config):
         for match in re.finditer(pattern, text):
             raw = match.group()
             start, end = match.span()
-            if kind in ("GENERIC_SECRET", "PHONE") and any(left <= start < right for left, right in url_spans):
+            in_url = any(left <= start < right for left, right in url_spans)
+            if kind == "PHONE" and in_url:
                 continue
             if kind == "GENERIC_SECRET":
-                if not re.search(r"key|token|secret|passw|pwd|auth|credential|api|bearer|session|private|access",
-                                 match.group(1), re.IGNORECASE):
+                if not _secret_key(match.group(1)):
+                    continue
+                if in_url and (start == 0 or text[start - 1] not in "?&#;"
+                               or text[match.end(1):match.start(2)] != "="):
                     continue
                 raw = match.group(2)
                 start, end = match.span(2)
