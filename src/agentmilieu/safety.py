@@ -188,7 +188,7 @@ def _redactions(text, config):
                 if re.search(r"\b(?:ISBN(?:-1[03])?|ISSN|DOI)\b[^\d\n]{0,80}$",
                              text[max(0, start - 128):start], re.IGNORECASE):
                     continue
-                if re.fullmatch(r"[+-]?\d+\.\d+(?:[\s/,°]+[+-]?\d+\.\d+)*", raw):
+                if not raw.startswith("+") and re.fullmatch(r"[+-]?\d+\.\d+(?:[\s/,°]+[+-]?\d+\.\d+)*", raw):
                     continue
                 if len(digits) == 13 and digits.startswith(("978", "979")):
                     continue
