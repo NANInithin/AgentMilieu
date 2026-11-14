@@ -81,6 +81,16 @@ def test_secret_bearing_assignments_still_redacted(key):
     assert [finding.kind for finding in findings] == ["GENERIC_SECRET"]
 
 
+@pytest.mark.parametrize("key", ["apikey", "accesstoken", "authtoken", "secretkey", "privatekey",
+                               "clientsecret", "apisecret", "sessiontoken", "bearertoken"])
+@pytest.mark.parametrize("case", [str.lower, str.upper, str.swapcase])
+def test_compact_secret_names_are_redacted(key, case):
+    value = "Ab9zQ2mWx7PkLs3nV8cR4tU6"
+    cleaned, findings = redact_text(f"{case(key)}={value}")
+    assert cleaned == f"{case(key)}=[REDACTED_GENERIC_SECRET_1]"
+    assert [finding.kind for finding in findings] == ["GENERIC_SECRET"]
+
+
 @pytest.mark.parametrize("parameter", ["?api_key=", "?page=1&access_token=", "#apiKey=",
                                      "?page=1;X-Auth-Token=", "?private.key="])
 def test_secret_url_parameters_are_redacted(parameter):

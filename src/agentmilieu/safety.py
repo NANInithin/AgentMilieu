@@ -115,12 +115,16 @@ def _entropy(text):
 
 
 def _secret_key(name):
+    segments = set(re.split(r"[_ .-]+", name.casefold()))
     name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
     name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
-    segments = set(re.split(r"[_ .-]+", name.casefold()))
+    segments.update(re.split(r"[_ .-]+", name.casefold()))
     return bool(segments & {"key", "token", "secret", "password", "passwd", "passw", "pwd",
                             "passphrase", "auth", "authorization", "authentication", "credential",
-                            "credentials", "api", "bearer", "session", "private", "access"})
+                            "credentials", "api", "bearer", "session", "private", "access"}
+                or any(re.fullmatch(r"(?:api|access|auth|secret|private|client|session|bearer)?"
+                                    r"(?:key|token|secret|password|passwd|pwd)", segment)
+                       for segment in segments))
 
 
 PATTERNS = {
