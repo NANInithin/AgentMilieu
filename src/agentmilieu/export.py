@@ -40,13 +40,14 @@ def export(pack_id, *, registry=None, destination="exports", notion=None):
     destination.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".export-", dir=destination))
     try:
-        for name, text in files.items():
-            (stage / name).write_text(text, encoding="utf-8")
+        encoded = {name: text.encode("utf-8") for name, text in files.items()}
+        for name, data in encoded.items():
+            (stage / name).write_bytes(data)
         manifest = {"pack_id": pack_id, "pack_hash": actual, "status": "Approved",
                     "metadata": payload["metadata"], "pack": payload["pack"],
-                    "hashes": {name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()},
+                    "hashes": {name: hashlib.sha256(data).hexdigest() for name, data in encoded.items()},
                     "hash_scope": "Pack hash covers canonical draft payload; file hashes exclude manifest itself."}
-        (stage / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (stage / "manifest.json").write_bytes(json.dumps(manifest, indent=2).encode("utf-8"))
         (stage / "run.sh").chmod(0o700)
         stage.rename(target)
     finally:

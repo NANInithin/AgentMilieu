@@ -1,5 +1,7 @@
+import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -57,6 +59,25 @@ def test_local_gate_and_export_artifacts(registry, tmp_path):
     assert "MODEL_PATH" in script
     with pytest.raises(FileExistsError):
         export(result.pack_id, registry=registry, destination=output)
+
+
+def test_export_hashes_match_exact_bytes_under_windows_translation(registry, tmp_path, monkeypatch):
+    text = "Café 東京\nsecond line\r\nlast line\n"
+    files = {"context.md": text, "run.sh": "#!/bin/sh\nprintf hello\n"}
+    pack_id = registry.create({"files": files, "metadata": {}, "pack": {}}, {})
+    registry.set_status(pack_id, "Approved")
+    write_text = Path.write_text
+
+    def windows_write(path, text, *args, **kwargs):
+        return write_text(path, text.replace("\n", "\r\n"), *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", windows_write)
+    target = export(pack_id, registry=registry, destination=tmp_path / "windows-export")
+    manifest = json.loads((target / "manifest.json").read_bytes())
+    for name, original in files.items():
+        data = (target / name).read_bytes()
+        assert data == original.encode("utf-8")
+        assert hashlib.sha256(data).hexdigest() == manifest["hashes"][name]
 
 
 def test_tamper_refused_even_after_approval(registry, tmp_path):
