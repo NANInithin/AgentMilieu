@@ -81,6 +81,10 @@ def _render(records):
     return "\n\n".join(f'[{record["citation"]}]\n{record["text"]}' for record in records)
 
 
+def _bundled_memory(records, index=None):
+    return 4 * len(json.dumps({"chunks": records, "index": index}).encode("utf-8")) + 1024 * len(records)
+
+
 def _dedupe(records, threshold):
     unique, duplicates = [], []
     for record in records:
@@ -191,7 +195,9 @@ def compose(chunks, budget: BudgetResult, *, sources, purpose="", options=None,
     base = budget.config
     system_tokens = max(base.system_tokens, counter.count(SYSTEM_PROMPT + "\n\n") + 64)
 
-    def re_budget(strategy, overhead=0, retrieval=0):
+    def re_budget(strategy, overhead=None, retrieval=0):
+        if overhead is None:
+            overhead = _bundled_memory(records)
         schemas = tool_schemas(strategy)
         config = replace(base, system_tokens=system_tokens,
                          tool_tokens=max(base.tool_tokens, counter.count(schemas_text(schemas))
@@ -219,7 +225,7 @@ def compose(chunks, budget: BudgetResult, *, sources, purpose="", options=None,
         explanation.append("BM25 relevance ranking with source-diversity penalty and near-duplicate removal.")
     if strategy == "rag":
         index = make_index(records)
-        overhead = 4 * len(json.dumps({"chunks": records, "index": index}).encode()) + 1024 * len(records)
+        overhead = _bundled_memory(records, index)
         current, schemas = re_budget(strategy, overhead, options.retrieval_tokens)
         explanation.append(f"RAG index/runtime RAM estimate={overhead} bytes (4x serialized data + "
                            f"1 KiB/chunk); reserved {options.retrieval_tokens} tokens/query.")
@@ -233,6 +239,8 @@ def compose(chunks, budget: BudgetResult, *, sources, purpose="", options=None,
         current, schemas = re_budget(strategy)
     if current.reserved_tokens > current.context_window:
         raise ValueError("Model/context cannot fit system, tools, query, retrieval and generation reserves")
+    explanation.append(f"Bundled corpus/server RAM estimate={current.config.retrieval_overhead_bytes - base.retrieval_overhead_bytes} "
+                       "bytes, including all source-lookup chunks (4x serialized data + 1 KiB/chunk).")
     if strategy == "stuff":
         knowledge, used = _render(records), {r["citation"] for r in records}
     else:

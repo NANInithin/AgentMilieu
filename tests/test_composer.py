@@ -159,3 +159,29 @@ def test_extraction_keeps_neutralised_chunk_whole(strategy):
     line = pack.knowledge.removeprefix("- ").rsplit(" [", 1)[0]
     assert json.loads(line) == {"untrusted_source_text": original}
     assert pack.knowledge.endswith(f'[{pack.corpus[0]["citation"]}]')
+
+
+@pytest.mark.parametrize("strategy,retrieval", [("stuff", 512), ("compress", 512), ("auto", 10000)])
+def test_all_bundled_chunks_are_memory_budgeted(strategy, retrieval):
+    import json
+    import math
+
+    from agentmilieu.devices import DeviceProfile
+
+    model = MODEL_PRESETS["Llama-3.2-1B"]
+    available = math.ceil((model.weights_bytes + 268435456 + 32768 * 2048) / .7)
+    device = DeviceProfile(available, available)
+    config = BudgetConfig(retrieval_overhead_bytes=1234)
+    original = calculate_budget(model, device, config)
+    texts = ["A short battery fact."] if strategy == "stuff" else corpus(16)
+    reports = reports_for(texts)
+    pack = compose([c for r in reports for c in r.chunks], original, sources=[r.source for r in reports],
+                   options=ComposeOptions(strategy=strategy, rag_ratio=2,
+                                          retrieval_tokens=retrieval, use_mistral=False))
+    assert pack.strategy == ("stuff" if strategy == "stuff" else "compress")
+    assert pack.index is None
+    overhead = 4 * len(json.dumps({"chunks": pack.corpus, "index": None}).encode("utf-8")) + 1024 * len(pack.corpus)
+    assert pack.budget.config.retrieval_overhead_bytes == 1234 + overhead
+    assert pack.budget.free_bytes == original.free_bytes - overhead
+    assert pack.budget.context_window == int(pack.budget.free_bytes // pack.budget.kv_bytes_per_token)
+    assert pack.token_accounting["total"] <= pack.budget.context_window
