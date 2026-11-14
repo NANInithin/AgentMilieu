@@ -44,7 +44,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 ROOT = Path(__file__).resolve().parent
-CHUNKS = [json.loads(line) for line in (ROOT / "chunks.jsonl").read_text().splitlines() if line]
+CHUNKS = [json.loads(line) for line in (ROOT / "chunks.jsonl").read_text(encoding="utf-8").splitlines() if line]
 BY_ID = {chunk["chunk_id"]: chunk for chunk in CHUNKS}
 mcp = FastMCP("AgentMilieu context")
 '''
@@ -63,7 +63,7 @@ def list_sources() -> list[dict]:
     return list(sources.values())
 '''
     search = '''
-INDEX = json.loads((ROOT / "index.json").read_text())
+INDEX = json.loads((ROOT / "index.json").read_text(encoding="utf-8"))
 
 @mcp.tool(description="Search bundled safe context using BM25 within the retrieval budget.")
 def search_context(query: str, k: int = 3) -> list[dict]:

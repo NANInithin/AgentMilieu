@@ -42,7 +42,7 @@ class LocalRegistry:
         self.path = self.root / "registry.json"
 
     def _read(self):
-        return json.loads(self.path.read_text()) if self.path.exists() else {}
+        return json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {}
 
     def get(self, pack_id):
         try:
@@ -85,7 +85,7 @@ class LocalRegistry:
         # pack_id is selected from known entries, not accepted as a filesystem path.
         if not re_safe_id(pack_id):
             raise ValueError("Invalid pack_id")
-        return json.loads((self.root / "drafts" / f"{pack_id}.json").read_text())
+        return json.loads((self.root / "drafts" / f"{pack_id}.json").read_text(encoding="utf-8"))
 
 
 def re_safe_id(value):
