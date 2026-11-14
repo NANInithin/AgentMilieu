@@ -319,3 +319,11 @@ def test_adjacent_iban_after_selected_prefix_is_rescanned(allowlist):
 def test_iban_after_invalid_iban_like_token_is_redacted():
     redacted, _ = redact_text("AB12 GB82 WEST 1234 5698 7654 32")
     assert redacted == "AB12 [REDACTED_IBAN_1]"
+
+
+def test_compact_phone_query_keys_redacted():
+    from agentmilieu.safety import redact_text
+
+    for key in ("phonenumber", "cellphone", "mobileNumber", "telno"):
+        text = f"https://example.org/form?{key}=555-123-4567"
+        assert "555-123-4567" not in redact_text(text)[0], key

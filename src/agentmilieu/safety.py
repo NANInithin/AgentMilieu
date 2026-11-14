@@ -123,8 +123,12 @@ def _name_segments(name):
 
 
 def _phone_key(name):
-    return bool(_name_segments(name) & {"phone", "tel", "telephone", "mobile", "cell", "fax",
-                                       "whatsapp", "msisdn", "sms", "contact"})
+    segments = _name_segments(name)
+    return bool(segments & {"phone", "tel", "telephone", "mobile", "cell", "fax",
+                            "whatsapp", "msisdn", "sms", "contact"}
+                or any(re.fullmatch(r"(?:cell|mobile|home|work|contact|whatsapp|fax)?"
+                                    r"(?:phone|tel|telephone|mobile|cell|fax)(?:no|num|number|nr)?", segment)
+                       for segment in segments))
 
 
 def _secret_key(name):
