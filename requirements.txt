@@ -1,1 +1,16 @@
-.[app,services]
+typer>=0.12
+gguf>=0.10
+huggingface_hub>=0.25
+requests>=2.25
+rank-bm25>=0.2.2
+mcp>=1.9,<2
+python-dotenv
+gradio==6.32.0
+pypdf
+python-docx
+openpyxl
+python-pptx
+pydantic
+context.dev
+notion-client
+mistralai>=1,<2
