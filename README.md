@@ -172,6 +172,16 @@ not the browser/phone; use **Preset** or **Manual** device settings for a phone
 target instead. Probed memory is a snapshot, not a guarantee against allocation
 failure or other workloads consuming memory later.
 
+Device controls follow the selected mode: **Probe** shows only probing controls,
+**Preset** shows the device dropdown, and **Manual** shows the two RAM fields.
+The read-only **Memory after model load** estimate refreshes when the Target model
+or budget/device settings change. It shows usable memory after reserve, weights,
+compute/index overhead, KV capacity, limiting constraints and context/knowledge
+tokens. Settings changes reuse the last probe snapshot, not a new GPU allocation;
+click Probe again to refresh it. This is a header-based estimate, not a model load.
+Build adds source/tool/tokenizer/retrieval reservations, so final pack figures may
+differ from the pre-build preview.
+
 ### Compare the same model with and without Milieu context
 
 After building a pack, open **5 · Compare**. Choose **Recommended**, **My account**

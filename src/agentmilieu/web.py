@@ -2,6 +2,7 @@
 
 import shutil
 import uuid
+from dataclasses import asdict
 from functools import lru_cache
 
 import gradio as gr
@@ -9,7 +10,7 @@ import gradio as gr
 from . import devices, gpu, llm
 from . import interfaces as ui
 from .audit import audit_markdown
-from .budget import BudgetConfig
+from .budget import BudgetConfig, calculate_budget
 from .composer import ComposeOptions
 from .devices import DEVICE_PRESETS
 from .export import export
@@ -127,11 +128,75 @@ def _session_pack(session):
 
 
 def probe_handler():
+    return probe_snapshot_handler()[1]
+
+
+def probe_snapshot_handler():
     try:
-        _, summary = _probe_device()
-        return redact_text(summary)[0]
+        device, summary = _probe_device()
+        summary = redact_text(summary)[0]
+        return {"device": asdict(device), "summary": summary}, summary
     except Exception as exc:
         raise gr.Error(redact_text(str(exc))[0]) from exc
+
+
+def device_visibility_handler(mode):
+    return tuple(gr.update(visible=visible) for visible in (
+        mode == "Probe this machine", mode == "Probe this machine", mode == "Preset",
+        mode == "Manual", mode == "Manual"))
+
+
+@lru_cache(maxsize=64)
+def _target_model(repo, filename):
+    return ModelSpec.from_hub(repo, filename)
+
+
+def memory_breakdown_handler(repo="", filename="", device_mode="Probe this machine",
+                             device_preset="phone-6gb", ram_gb=6, available_gb=4.5,
+                             kv_type="f16", max_ctx=8192, quality_cap=8192,
+                             latency_target=0, prefill_tok_s=100, probe_snapshot=None):
+    heading = "### Memory after model load\n\n"
+    if not repo or not filename:
+        return heading + "Select a Target GGUF file to estimate memory."
+    if device_mode == "Probe this machine" and not probe_snapshot:
+        return heading + "Click Probe to detect this machine's available memory."
+    try:
+        model = _target_model(repo, filename)
+    except Exception:  # noqa: BLE001 -- unavailable/gated/invalid headers should only show a hint
+        return heading + "Cannot read the selected GGUF header. Check access or choose another file, then retry."
+    try:
+        if device_mode == "Probe this machine":
+            device = devices.DeviceProfile(**probe_snapshot["device"])
+        elif device_mode == "Preset":
+            device = ui.select_device(device_preset)
+        elif device_mode == "Manual":
+            device = ui.select_device(ram_gb=ram_gb, available_gb=available_gb)
+        else:
+            return heading + "Select a device mode."
+        budget = calculate_budget(model, device, BudgetConfig(
+            kv_type=kv_type, max_ctx=max_ctx or None, quality_cap=quality_cap or None,
+            target_first_token_s=latency_target or None, prefill_tok_s=prefill_tok_s))
+    except (ValueError, TypeError, KeyError):
+        return heading + "Check the device memory and Advanced budget settings to calculate an estimate."
+    rows = [("Device memory available", f"{device.available_ram / devices.GIB:.3f} GiB"),
+            ("Budget-usable memory (after reserve)", f"{budget.usable_ram_bytes / devices.GIB:.3f} GiB")]
+    rows.extend((name, f"{value:.3f} GiB") for name, value in ui.ram_rows(budget))
+    rows.extend([
+        ("Free for KV cache (before allocation)", f"{budget.free_bytes / devices.GIB:.3f} GiB"),
+        ("KV bytes per token", f"{budget.kv_bytes_per_token:,.2f}"),
+        ("Max tokens memory allows", f"{budget.mem_tokens:,}"),
+        ("Final context window", f"{budget.context_window:,} tokens"),
+        ("Binding constraints", ", ".join({"training": "training context", "user": "max ctx",
+                                         "quality": "quality cap"}.get(key, key)
+                                        for key in budget.binding_constraints)),
+        ("Knowledge tokens (before composition)", f"{budget.knowledge_budget:,}"),
+    ])
+    return (heading + "Estimate, not a measured model load. Uses the last probe snapshot in Probe mode. "
+            "Build recalculates with source/tool/tokenizer and retrieval reservations; "
+            "retrieval/index is zero in this pre-build estimate.\n\n"
+            + "| Component | Estimate |\n| --- | --- |\n"
+            + "\n".join(f"| {name} | {value} |" for name, value in rows)
+            + "\n\n" + "\n\n".join(budget.warnings))
 
 
 def _probe_device():
@@ -337,11 +402,13 @@ def create_app():
             device_mode = gr.Radio(["Probe this machine", "Preset", "Manual"],
                                    value="Probe this machine", label="Device selection")
             probe = gr.Button("Probe")
+            probe_snapshot = gr.State(None)
             probe_result = gr.Textbox(label="Detected hardware & budget device", interactive=False, lines=4)
-            device = gr.Dropdown(list(DEVICE_PRESETS), value="phone-6gb", label="Device preset")
+            device = gr.Dropdown(list(DEVICE_PRESETS), value="phone-6gb", label="Device preset", visible=False)
             with gr.Row():
-                ram = gr.Number(value=6, label="Manual total RAM (GiB)")
-                available = gr.Number(value=4.5, label="Manual available RAM (GiB)")
+                ram = gr.Number(value=6, label="Manual total RAM (GiB)", visible=False)
+                available = gr.Number(value=4.5, label="Manual available RAM (GiB)", visible=False)
+            memory_preview = gr.Markdown(memory_breakdown_handler())
             with gr.Accordion("Advanced budget & composition", open=False):
                 with gr.Row():
                     kv = gr.Dropdown(["f16", "q8_0", "q4_0"], value="f16", label="KV cache type")
@@ -401,7 +468,14 @@ def create_app():
         _wire_model_picker(target, state, "target")
         _wire_model_picker(chat, state, "compare")
         demo.load(_picker_files, target["repo"], [target["file"], target["files"]], api_visibility="private")
-        probe.click(probe_handler, outputs=probe_result, api_name="probe")
+        memory_inputs = [target["repo"], target["file"], device_mode, device, ram, available,
+                         kv, max_ctx, quality, latency, prefill, probe_snapshot]
+        device_mode.change(device_visibility_handler, device_mode,
+                           [probe, probe_result, device, ram, available], api_name="device_visibility")
+        probe.click(probe_snapshot_handler, outputs=[probe_snapshot, probe_result], api_name="probe").success(
+            memory_breakdown_handler, memory_inputs, memory_preview, api_visibility="private")
+        gr.on([component.change for component in memory_inputs[:-1]], memory_breakdown_handler,
+              memory_inputs, memory_preview, api_name="target_memory")
         built = build.click(build_handler, [state, urls, names, files, purpose, target["repo"],
             target["file"], device_mode, device, ram, available, kv,
             max_ctx, quality, latency, prefill, strategy, no_mistral, offline, scorton,

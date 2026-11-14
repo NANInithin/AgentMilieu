@@ -19,6 +19,7 @@ from agentmilieu.tokens import HFTokenCounter
 
 @pytest.fixture(autouse=True)
 def web_env(monkeypatch, tmp_path):
+    web._target_model.cache_clear()
     monkeypatch.setenv("MILIEU_HOME", str(tmp_path / "registry"))
     monkeypatch.setattr(ui, "load_dotenv", lambda: None)
     monkeypatch.setattr(ui, "select_model", Mock(return_value=MODEL_PRESETS["Llama-3.2-1B"]))
@@ -27,6 +28,8 @@ def web_env(monkeypatch, tmp_path):
     monkeypatch.setattr(web.devices, "probe_cpu", lambda: DEVICE_PRESETS["phone-6gb"])
     for key in ("CONTEXT_DEV_API_KEY", "MISTRAL_API_KEY", "NOTION_TOKEN", "NOTION_DATABASE_ID"):
         monkeypatch.delenv(key, raising=False)
+    yield
+    web._target_model.cache_clear()
 
 
 def build(**kwargs):
@@ -115,6 +118,10 @@ def test_app_wiring_and_banner(monkeypatch):
     assert not any(isinstance(b, gr.Radio) and b.label == "Model selection" for b in demo.blocks.values())
     device = next(b for b in demo.blocks.values() if isinstance(b, gr.Radio) and b.label == "Device selection")
     assert device.value == "Probe this machine"
+    for label in ("Device preset", "Manual total RAM (GiB)", "Manual available RAM (GiB)"):
+        assert next(b for b in demo.blocks.values() if getattr(b, "label", None) == label).visible is False
+    assert next(b for b in demo.blocks.values() if getattr(b, "label", None) ==
+                "Detected hardware & budget device").visible is True
     assert "probe" in {fn.api_name for fn in demo.fns.values()}
     forbidden_probe.assert_not_called()
 
@@ -151,6 +158,58 @@ def test_probe_allocation_failure_uses_cpu(monkeypatch):
     monkeypatch.setattr(web.gpu, "probe", Mock(side_effect=RuntimeError("GPU quota exhausted")))
     assert "GPU quota exhausted" in web.probe_handler()
     assert "Budget uses:" in web.probe_handler()
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("Probe this machine", [True, True, False, False, False]),
+    ("Preset", [False, False, True, False, False]),
+    ("Manual", [False, False, False, True, True]),
+])
+def test_device_visibility(mode, expected):
+    assert [update["visible"] for update in web.device_visibility_handler(mode)] == expected
+
+
+@pytest.mark.parametrize("mode", ["Probe this machine", "Preset", "Manual"])
+def test_memory_breakdown_uses_cached_header_and_snapshot(monkeypatch, mode):
+    model = MODEL_PRESETS["Llama-3.2-1B"]
+    header = Mock(return_value=model)
+    monkeypatch.setattr(web.ModelSpec, "from_hub", header)
+    snapshot, summary = web.probe_snapshot_handler()
+    assert json.loads(json.dumps(snapshot))["summary"] == summary
+    forbidden_probe = Mock(side_effect=AssertionError("Changing settings must not re-probe"))
+    monkeypatch.setattr(web.gpu, "probe", forbidden_probe)
+    result = web.memory_breakdown_handler("owner/repo", "file.gguf", device_mode=mode,
+        kv_type="q8_0", max_ctx=4096, quality_cap=2048, probe_snapshot=snapshot)
+    assert "Memory after model load" in result
+    assert "| Final context window | 2,048 tokens |" in result
+    assert "| Binding constraints | quality cap |" in result
+    assert "Budget-usable memory (after reserve)" in result and "Free for KV cache" in result
+    assert "Retrieval/index" in result and "KV bytes per token" in result
+    assert "Knowledge tokens (before composition) | 1,152" in result
+    assert "not a measured model load" in result
+    updated = web.memory_breakdown_handler("owner/repo", "file.gguf", device_mode=mode,
+        kv_type="f16", max_ctx=1024, quality_cap=0, probe_snapshot=snapshot)
+    assert "| Final context window | 1,024 tokens |" in updated
+    assert "| Binding constraints | max ctx |" in updated
+    assert result != updated
+    header.assert_called_once_with("owner/repo", "file.gguf")
+    forbidden_probe.assert_not_called()
+
+
+def test_memory_breakdown_hints_and_invalid_settings(monkeypatch):
+    assert "Select a Target GGUF" in web.memory_breakdown_handler()
+    assert "Click Probe" in web.memory_breakdown_handler("owner/repo", "file")
+    header = Mock(side_effect=OSError("Hub unavailable"))
+    monkeypatch.setattr(web.ModelSpec, "from_hub", header)
+    assert "Cannot read" in web.memory_breakdown_handler("owner/repo", "file", device_mode="Preset")
+    header.side_effect = None
+    header.return_value = MODEL_PRESETS["Llama-3.2-1B"]
+    assert "Check the device memory" in web.memory_breakdown_handler(
+        "owner/repo", "file", device_mode="Manual", available_gb=7, ram_gb=6)
+    assert "Check the device memory" in web.memory_breakdown_handler(
+        "owner/repo", "file", device_mode="Preset", quality_cap=-1)
+    assert "| Final context window |" in web.memory_breakdown_handler(
+        "owner/repo", "file", device_mode="Preset")
 
 
 @pytest.mark.parametrize("environment,expected", [
