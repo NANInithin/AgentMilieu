@@ -111,11 +111,12 @@ def export_handler(session):
 
 
 def create_app():
+    integrations = ui.integrations()
     with gr.Blocks(title="AgentMilieu", analytics_enabled=False, delete_cache=(3600, 3600)) as demo:
         gr.Markdown("# AgentMilieu\n### Trusted context. Small models. Human approval.")
         gr.Markdown("Compile sources into a budgeted, cited context pack for llama.cpp. "
                     "Heuristic safety checks are **not** a security guarantee.")
-        gr.Markdown("**Integrations** · " + " · ".join(f"{key}: {value}" for key, value in ui.integrations().items()))
+        gr.Markdown("**Integrations** · " + " · ".join(f"{key}: {value}" for key, value in integrations.items()))
         gr.Markdown("Uploads are processed on this server. Use a local instance for sensitive documents. "
                     "Local Approve/Reject is a demo workflow, not authenticated review.")
         state = gr.State(value=None)
@@ -126,7 +127,8 @@ def create_app():
             files = gr.File(label="Upload documents", file_count="multiple", type="filepath",
                             file_types=sorted(ui.FILE_TYPES))
             purpose = gr.Textbox(label="Purpose / intended questions", lines=3)
-            offline = gr.Checkbox(value=True, label="Offline mode: files only; no external services")
+            offline = gr.Checkbox(value=not any(value == "configured" for value in integrations.values()),
+                                  label="Offline mode: files only; no external services")
         with gr.Tab("2 · Target"):
             model_mode = gr.Radio(["Preset", "HF GGUF", "Manual"], value="Preset", label="Model selection")
             preset = gr.Dropdown(list(MODEL_PRESETS), value="Llama-3.2-1B", label="Model preset (approximate Q4_K_M)")

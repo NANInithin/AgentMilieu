@@ -121,7 +121,7 @@ PATTERNS = {
     "GITHUB_TOKEN": r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b",
     "SK_KEY": r"\bsk-[A-Za-z0-9_-]{16,}\b",
     "SLACK_TOKEN": r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b",
-    "GENERIC_SECRET": r"\b[A-Za-z_][\w-]{1,50}\s*[:=]\s*[\"']?([A-Za-z0-9_+/=-]{20,})",
+    "GENERIC_SECRET": r"\b([A-Za-z_][\w-]{1,50})\s*[:=]\s*[\"']?([A-Za-z0-9_+/=-]{20,})",
     "EMAIL": r"(?<![\w.+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     "IBAN": r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b",
     "CREDIT_CARD": r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)",
@@ -134,6 +134,8 @@ def _redactions(text, config):
     positions = [i for i, char in enumerate(text) if not INVISIBLE.fullmatch(char)]
     text = "".join(text[i] for i in positions)
     candidates = []
+    url_spans = [match.span() for match in re.finditer(
+        r"\b(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>\"']+", text, re.IGNORECASE)]
     allowed_ibans = {"".join(value.split()).upper() for value in config.allowlist}
     allowed_spans = []
     if config.enabled.get("IBAN", True):
@@ -150,9 +152,14 @@ def _redactions(text, config):
         for match in re.finditer(pattern, text):
             raw = match.group()
             start, end = match.span()
+            if kind in ("GENERIC_SECRET", "PHONE") and any(left <= start < right for left, right in url_spans):
+                continue
             if kind == "GENERIC_SECRET":
-                raw = match.group(1)
-                start, end = match.span(1)
+                if not re.search(r"key|token|secret|passw|pwd|auth|credential|api|bearer|session|private|access",
+                                 match.group(1), re.IGNORECASE):
+                    continue
+                raw = match.group(2)
+                start, end = match.span(2)
                 if _entropy(raw) < 3.5:
                     continue
             if raw in config.allowlist or any(left <= start and end <= right for left, right in allowed_spans):
@@ -161,6 +168,13 @@ def _redactions(text, config):
                 continue
             if kind == "PHONE":
                 digits = re.sub(r"\D", "", raw)
+                if re.search(r"\b(?:ISBN(?:-1[03])?|ISSN|DOI)\b[^\d\n]{0,80}$",
+                             text[max(0, start - 128):start], re.IGNORECASE):
+                    continue
+                if "." in raw and not re.fullmatch(r"\+?(?:\d{1,3}\.)?\d{3}\.\d{3}\.\d{4}", raw):
+                    continue
+                if len(digits) == 13 and digits.startswith(("978", "979")):
+                    continue
                 if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", raw):
                     continue
                 if not 7 <= len(digits) <= 15:

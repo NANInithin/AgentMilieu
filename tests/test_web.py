@@ -100,6 +100,23 @@ def test_app_wiring_and_banner(monkeypatch):
     assert any(isinstance(block, gr.State) for block in demo.blocks.values())
 
 
+@pytest.mark.parametrize("environment,expected", [
+    ({}, True),
+    ({"CONTEXT_DEV_API_KEY": "configured"}, False),
+    ({"MISTRAL_API_KEY": "configured"}, False),
+    ({"NOTION_TOKEN": "configured", "NOTION_DATABASE_ID": "configured"}, False),
+    ({"NOTION_TOKEN": "configured"}, True),
+    ({"NOTION_DATABASE_ID": "configured"}, True),
+])
+def test_offline_checkbox_default_tracks_integrations(monkeypatch, environment, expected):
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    demo = web.create_app()
+    checkbox = next(block for block in demo.blocks.values()
+                    if isinstance(block, gr.Checkbox) and block.label.startswith("Offline mode"))
+    assert checkbox.value is expected
+
+
 def test_strategy_overrides_and_mistral_disable(monkeypatch):
     from agentmilieu import safety
 
