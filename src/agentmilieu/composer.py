@@ -28,7 +28,7 @@ CITATION = re.compile(r"\[(S[\w-]+#c\d+)\]")
 class ComposeOptions:
     rag_ratio: float = 4.0
     retrieval_tokens: int = 1024
-    core_tokens: int = 512
+    core_tokens: int | None = None
     near_duplicate_threshold: float = 0.9
     expand_ratio: float = 0.5
     use_mistral: bool = True
@@ -36,7 +36,8 @@ class ComposeOptions:
 
     def __post_init__(self):
         if (self.strategy not in ("auto", "stuff", "compress", "rag")
-                or self.rag_ratio <= 1 or self.retrieval_tokens < 1 or self.core_tokens < 1
+                or self.rag_ratio <= 1 or self.retrieval_tokens < 1
+                or (self.core_tokens is not None and self.core_tokens < 1)
                 or not 0 < self.near_duplicate_threshold <= 1 or not 0 < self.expand_ratio < 1):
             raise ValueError("Invalid composition limits")
 
@@ -148,7 +149,79 @@ def mistral_summarise(records, purpose, max_tokens):
     return response.choices[0].message.content or ""
 
 
+def _link_end(text, start):
+    depth, quote, index = 1, None, start + 1
+    while index < len(text):
+        char = text[index]
+        if char == "\n":
+            return None
+        if char == "\\":
+            index += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'" and text[index - 1].isspace():
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def _plain_markdown_links(text):
+    parts, cursor = [], 0
+    for match in re.finditer(r"\]\(", text):
+        if match.start() < cursor:
+            continue
+        end = _link_end(text, match.start() + 1)
+        if end is None:
+            continue
+        depth, start = 1, match.start() - 1
+        while start >= cursor and text[start] != "\n":
+            if start > 0 and text[start - 1] == "\\":
+                start -= 2
+                continue
+            if text[start] == "]":
+                depth += 1
+            elif text[start] == "[":
+                depth -= 1
+                if depth == 0:
+                    break
+            start -= 1
+        if depth == 0:
+            label = text[start + 1:match.start()]
+            if start > cursor and text[start - 1] == "!":
+                start -= 1
+            parts.extend([text[cursor:start], label])
+        elif text[match.start() + 2:].startswith(("https://", "http://")):
+            parts.append(text[cursor:match.start()])
+        else:
+            continue
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def _extractive_lines(sentence, citation, limit, counter):
+    target = min(limit, max(32, min(256, limit // 8)))
+    words = []
+    for word in sentence.split():
+        if words and counter.count(f'- {" ".join([*words, word])} [{citation}]') > target:
+            yield f'- {" ".join(words)} [{citation}]'
+            words = []
+        words.append(word)
+    if words:
+        yield f'- {" ".join(words)} [{citation}]'
+
+
 def _compress(records, purpose, limit, counter, summariser):
+    if limit <= 0:
+        return "", set(), 0
     lines, used = [], set()
     split = max(1, len(records) // 2)
     generated = []
@@ -163,11 +236,14 @@ def _compress(records, purpose, limit, counter, summariser):
     query = set(terms(purpose))
     for record in records:
         if record["text"].startswith('{"untrusted_source_text":'):
-            sentences = [record["text"]]
+            sentence_groups.append([f'- {record["text"]} [{record["citation"]}]'])
+            continue
         else:
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", record["text"]) if s.strip()]
+            text = _plain_markdown_links(record["text"])
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
         sentences.sort(key=lambda sentence: -len(query & set(terms(sentence))))
-        sentence_groups.append([f'- {sentence} [{record["citation"]}]' for sentence in sentences])
+        sentence_groups.append([line for sentence in sentences
+                                for line in _extractive_lines(sentence, record["citation"], limit, counter)])
     candidates = [sentences[i] for i in range(max(map(len, sentence_groups), default=0))
                   for sentences in sentence_groups if i < len(sentences)]
     if generated:
@@ -246,8 +322,12 @@ def compose(chunks, budget: BudgetResult, *, sources, purpose="", options=None,
     else:
         if summariser is None and options.use_mistral and os.getenv("MISTRAL_API_KEY"):
             summariser = mistral_summarise
-        limit = min(current.knowledge_budget, options.core_tokens) if strategy == "rag" else current.knowledge_budget
+        limit = current.knowledge_budget
+        if strategy == "rag" and options.core_tokens is not None:
+            limit = min(limit, options.core_tokens)
         knowledge, used, generated = _compress(records, purpose, limit, counter, summariser)
+        explanation.append(f"Static knowledge target={limit} tokens after system, tools, query, "
+                           "generation and retrieval reservations.")
         explanation.append(f"Extractive sentence selection; {generated} citation-valid generated lines considered. "
                            "Citation checks establish source-ID validity, not semantic entailment.")
     included = [{"chunk_id": r["chunk_id"], "reason": "verbatim" if strategy == "stuff" else "cited fact/core"}

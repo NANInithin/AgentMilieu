@@ -114,6 +114,33 @@ def _entropy(text):
     return -sum((n / len(text)) * math.log2(n / len(text)) for n in Counter(text).values())
 
 
+def _name_segments(name):
+    segments = set(re.split(r"[_ .-]+", name.casefold()))
+    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    segments.update(re.split(r"[_ .-]+", name.casefold()))
+    return segments
+
+
+def _phone_key(name):
+    segments = _name_segments(name)
+    return bool(segments & {"phone", "tel", "telephone", "mobile", "cell", "fax",
+                            "whatsapp", "msisdn", "sms", "contact"}
+                or any(re.fullmatch(r"(?:cell|mobile|home|work|contact|whatsapp|fax)?"
+                                    r"(?:phone|tel|telephone|mobile|cell|fax)(?:no|num|number|nr)?", segment)
+                       for segment in segments))
+
+
+def _secret_key(name):
+    segments = _name_segments(name)
+    return bool(segments & {"key", "token", "secret", "password", "passwd", "passw", "pwd",
+                            "passphrase", "auth", "authorization", "authentication", "credential",
+                            "credentials", "api", "bearer", "session", "private", "access"}
+                or any(re.fullmatch(r"(?:api|access|auth|secret|private|client|session|bearer)?"
+                                    r"(?:key|token|secret|password|passwd|pwd)", segment)
+                       for segment in segments))
+
+
 PATTERNS = {
     "PRIVATE_KEY": r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----",
     "JWT": r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
@@ -121,12 +148,12 @@ PATTERNS = {
     "GITHUB_TOKEN": r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b",
     "SK_KEY": r"\bsk-[A-Za-z0-9_-]{16,}\b",
     "SLACK_TOKEN": r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b",
-    "GENERIC_SECRET": r"\b[A-Za-z_][\w-]{1,50}\s*[:=]\s*[\"']?([A-Za-z0-9_+/=-]{20,})",
+    "GENERIC_SECRET": r"\b([A-Za-z_][\w.-]{1,50})\s*[:=]\s*[\"']?([A-Za-z0-9_+/=-]{20,})",
     "EMAIL": r"(?<![\w.+-])[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     "IBAN": r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b",
     "CREDIT_CARD": r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)",
-    "IP": r"(?<![\w:])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![\w:])",
-    "PHONE": r"(?<![\w])\+?\d[\d(). -]{6,}\d(?!\w)|(?<!\w)\(\d{3}\)[ .-]*\d{3}[ .-]*\d{4}(?!\w)",
+    "IP": r"(?<![\w:.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![\w:])",
+    "PHONE": r"(?<![\w])(?:\+|%2[Bb])?\d[\d(). -]{6,}\d(?!\w)|(?<!\w)\(\d{3}\)[ .-]*\d{3}[ .-]*\d{4}(?!\w)",
 }
 
 
@@ -134,6 +161,8 @@ def _redactions(text, config):
     positions = [i for i, char in enumerate(text) if not INVISIBLE.fullmatch(char)]
     text = "".join(text[i] for i in positions)
     candidates = []
+    url_spans = [match.span() for match in re.finditer(
+        r"\b(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>\"']+", text, re.IGNORECASE)]
     allowed_ibans = {"".join(value.split()).upper() for value in config.allowlist}
     allowed_spans = []
     if config.enabled.get("IBAN", True):
@@ -150,9 +179,20 @@ def _redactions(text, config):
         for match in re.finditer(pattern, text):
             raw = match.group()
             start, end = match.span()
+            in_url = any(left <= start < right for left, right in url_spans)
+            if kind == "PHONE" and in_url:
+                parameter = re.search(r"[?&#;]([\w.-]+)=$", text[max(0, start - 128):start])
+                if not parameter or not (_phone_key(parameter.group(1)) or raw.startswith("+")
+                                         or raw[:3].casefold() == "%2b"):
+                    continue
             if kind == "GENERIC_SECRET":
-                raw = match.group(1)
-                start, end = match.span(1)
+                if not _secret_key(match.group(1)):
+                    continue
+                if in_url and (start == 0 or text[start - 1] not in "?&#;"
+                               or text[match.end(1):match.start(2)] != "="):
+                    continue
+                raw = match.group(2)
+                start, end = match.span(2)
                 if _entropy(raw) < 3.5:
                     continue
             if raw in config.allowlist or any(left <= start and end <= right for left, right in allowed_spans):
@@ -160,13 +200,21 @@ def _redactions(text, config):
             if kind == "CREDIT_CARD" and not _luhn(raw):
                 continue
             if kind == "PHONE":
-                digits = re.sub(r"\D", "", raw)
-                if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", raw):
+                phone = "+" + raw[3:] if raw[:3].casefold() == "%2b" else raw
+                digits = re.sub(r"\D", "", phone)
+                if re.search(r"\b(?:ISBN(?:-1[03])?|ISSN|DOI)\b[^\d\n]{0,80}$",
+                             text[max(0, start - 128):start], re.IGNORECASE):
+                    continue
+                if not phone.startswith("+") and re.fullmatch(r"[+-]?\d+\.\d+(?:[\s/,°]+[+-]?\d+\.\d+)*", phone):
+                    continue
+                if len(digits) == 13 and digits.startswith(("978", "979")):
+                    continue
+                if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", phone):
                     continue
                 if not 7 <= len(digits) <= 15:
                     continue
                 # Do not relabel invalid credit-card candidates as phone numbers.
-                if len(digits) >= 13 and not raw.startswith("+"):
+                if len(digits) >= 13 and not phone.startswith("+"):
                     continue
             if kind == "IP":
                 try:
