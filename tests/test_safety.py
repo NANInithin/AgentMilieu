@@ -212,3 +212,16 @@ def test_randomized_iban_scanner_does_not_skip_adjacent_accounts():
     assert [f.span for f in findings if f.kind == "IBAN"] == expected_spans
     for account, permitted in accounts:
         assert (account in redacted) is permitted
+
+
+@pytest.mark.parametrize("allowlist", [frozenset(), frozenset({"GB82 WEST 1234 5698 7654 32"})])
+def test_adjacent_iban_after_selected_prefix_is_rescanned(allowlist):
+    gb, de = "GB82 WEST 1234 5698 7654 32", "DE93 3704 0044 1000 0000 01"
+    redacted, _ = redact_text(gb + " " + de, RedactionConfig(allowlist=allowlist))
+    expected_gb = gb if allowlist else "[REDACTED_IBAN_1]"
+    assert redacted == expected_gb + " " + f"[REDACTED_IBAN_{1 if allowlist else 2}]"
+
+
+def test_iban_after_invalid_iban_like_token_is_redacted():
+    redacted, _ = redact_text("AB12 GB82 WEST 1234 5698 7654 32")
+    assert redacted == "AB12 [REDACTED_IBAN_1]"
