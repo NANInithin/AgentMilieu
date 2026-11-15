@@ -52,8 +52,15 @@ def test_catalog(hub, monkeypatch):
     assert llm.gguf_files("repo") == [{"filename": "small.gguf", "size": 10}]
     monkeypatch.delenv("SPACE_AUTHOR_NAME")
     monkeypatch.delenv("MILIEU_HF_AUTHOR")
-    assert llm.account_models() == []
-    assert llm.curated_models()
+    assert llm.account_models() == ["owner/model"]
+    assert hub[-1] == {"author": "NANI-Nithin", "filter": "gguf"}
+
+
+def test_curated_models():
+    expected = ["NANI-Nithin/Qwen3-0.6B-GGUF", "NANI-Nithin/granite-4.2-3b-GGUF"]
+    assert llm.curated_models() == expected
+    llm.curated_models().clear()
+    assert llm.curated_models() == expected
 
 
 def test_catalog_failure(monkeypatch):

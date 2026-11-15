@@ -21,13 +21,8 @@ _MODELS = {}
 _LOCK = threading.Lock()
 _CUDA_LIBS = []
 _CURATED = [
-    "bartowski/Llama-3.2-1B-Instruct-GGUF",
-    "bartowski/Llama-3.2-3B-Instruct-GGUF",
-    "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-    "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
-    "bartowski/SmolLM2-1.7B-Instruct-GGUF",
-    "bartowski/gemma-2-2b-it-GGUF",
-    "bartowski/Phi-3.5-mini-instruct-GGUF",
+    "NANI-Nithin/Qwen3-0.6B-GGUF",
+    "NANI-Nithin/granite-4.2-3b-GGUF",
 ]
 
 
@@ -37,9 +32,8 @@ def _api():
 
 def account_models():
     """Return owner repo IDs; discovery failure is an empty catalog."""
-    owner = os.getenv("MILIEU_HF_AUTHOR") or os.getenv("SPACE_AUTHOR_NAME")
-    if not owner:
-        return []
+    owner = (os.getenv("MILIEU_HF_AUTHOR") or os.getenv("SPACE_AUTHOR_NAME")
+             or "NANI-Nithin")
     try:
         return [model.id for model in _api().list_models(author=owner, filter="gguf")]
     except Exception:  # noqa: BLE001 -- account discovery is deliberately best-effort

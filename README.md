@@ -152,6 +152,21 @@ After a successful build, Compare inherits Target's source, repository/file choi
 and selected values, plus the pack's context window. You can still switch models
 in Compare afterwards.
 
+**Recommended** in both tabs is a compatibility-checked selection from
+[`NANI-Nithin`](https://huggingface.co/NANI-Nithin):
+
+1. `NANI-Nithin/Qwen3-0.6B-GGUF` (default): `Qwen3-0.6B-Q4_K_M.gguf`.
+2. `NANI-Nithin/granite-4.2-3b-GGUF`: `granite-4.2-3b-Q4_K_M.gguf`.
+
+Both selected Q4_K_M files are below the default 4 GiB cap, have compatible
+`qwen3` / `granite` architectures, and were CPU-loaded through Compare with their
+embedded chat templates using the pinned `llama-cpp-python==0.3.19`. This checks
+compatibility, not response quality or performance on a particular phone/GPU.
+Other quants are not guaranteed to work: Qwen3's Q1_0 failed to load in that build.
+K2-Horizon is excluded because `k2-horizon` is unsupported; other account repos
+may require newer runtimes, unsupported templates or model-header handling.
+**My account** and **Search Hub** remain discovery lists, not verified catalogs.
+
 Token budgeting first tries `tokenizer.json` in the GGUF repository, then the model
 card's `base_model` repository/repositories. Loaded tokenizers are cached and used
 throughout ingestion, composition and the pack's token accounting. Gated/missing
@@ -218,7 +233,7 @@ python app.py
 
 Optional Space variables/secrets:
 - `MILIEU_HF_AUTHOR`: owner whose GGUF repositories populate **My account**;
-  falls back to the automatic `SPACE_AUTHOR_NAME` variable.
+  falls back to the automatic `SPACE_AUTHOR_NAME` variable, then `NANI-Nithin`.
 - `HF_TOKEN` (**secret**): Hub read token for private repositories and downloads.
 - `MILIEU_MAX_GGUF_GB`: maximum GGUF size in GiB, default **4**. Large models can
   exhaust host/GPU RAM even below this cap.
