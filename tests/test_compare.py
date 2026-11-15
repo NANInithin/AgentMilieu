@@ -43,7 +43,8 @@ def test_catalog_files_and_context(monkeypatch, session):
     monkeypatch.setattr(llm, "search_models", lambda q: [q + "/found"])
     assert web.catalog_handler("My account")["value"] == "mine/model"
     assert web.catalog_handler("Search Hub", "tiny")["value"] == "tiny/found"
-    assert "Llama-3.2-1B" in web.catalog_handler("Recommended", session=session)["value"]
+    assert (web.catalog_handler("Recommended", session=session)["value"]
+            == llm.curated_models()[0])
     monkeypatch.setattr(llm, "gguf_files", lambda _: [
         {"filename": "Q4_K_M.gguf", "size": 1024**3},
         {"filename": "Q8.gguf", "size": 2 * 1024**3}])
