@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentMilieu — Trusted context compiler for on-device language models</title>
+  <meta name="description" content="AgentMilieu compiles documents into safe, cited, budget-fitted context packs for small on-device models. Redact, quarantine, audit and require human review before export.">
+  <link rel="canonical" href="https://agentmilieu.naninithin.me/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://agentmilieu.naninithin.me/">
+  <meta property="og:title" content="AgentMilieu — Trusted context for on-device SLMs">
+  <meta property="og:description" content="Redact, quarantine, fit the RAM budget, audit and human-review context before it reaches a small local model.">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="AgentMilieu — Trusted context for on-device SLMs">
+  <meta name="twitter:description" content="A context compiler for llama.cpp / GGUF models: safe by process, cited, and reviewed before export.">
+  <meta name="theme-color" content="#fafafa">
+  <link rel="icon" href="https://raw.githubusercontent.com/NANInithin/NANInithin.github.io/main/Assets/77537690.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --background: oklch(.985 0 0); --surface: oklch(1 0 0); --muted-surface: oklch(.953 .003 260);
+      --foreground: oklch(.205 .005 260); --muted: oklch(.50 .009 260); --border: oklch(.86 .006 260);
+      --primary: oklch(.58 .205 29); --primary-foreground: oklch(1 0 0); --primary-soft: oklch(.95 .026 29);
+      --accent: oklch(.51 .21 264); --accent-soft: oklch(.94 .024 264); --success: oklch(.43 .095 160);
+      --inverse: oklch(.19 .006 260); --inverse-foreground: oklch(.97 0 0); --inverse-muted: oklch(.72 .008 260); --inverse-border: oklch(.35 .008 260);
+      --sans: 'Archivo', sans-serif; --mono: 'IBM Plex Mono', monospace;
+    }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html { scroll-behavior:smooth; scroll-padding-top:88px; }
+    body { background:var(--background); color:var(--foreground); font-family:var(--sans); line-height:1.6; -webkit-font-smoothing:antialiased; }
+    a { color:inherit; text-decoration:none; } button { font:inherit; cursor:pointer; } a,button { -webkit-tap-highlight-color:transparent; }
+    :focus-visible { outline:2px solid var(--accent); outline-offset:5px; }
+    h1,h2,h3 { line-height:1.12; letter-spacing:0; } h2 { font-size:38px; font-weight:600; } h3 { font-size:21px; font-weight:600; }
+    p { color:var(--muted); } .mono,code,pre { font-family:var(--mono); }
+    .wrap { width:min(1180px,100%); margin:auto; padding:0 36px; }
+    .btn { display:inline-flex; justify-content:center; align-items:center; gap:12px; min-height:46px; padding:11px 20px; border:1px solid var(--border); border-radius:3px; background:transparent; color:var(--foreground); font-size:14px; font-weight:600; transition:background .18s,transform .18s; }
+    .btn:hover { background:var(--muted-surface); transform:translateY(-2px); }
+    .btn-primary { background:var(--primary); border-color:var(--primary); color:var(--primary-foreground); } .btn-primary:hover { background:var(--foreground); border-color:var(--foreground); }
+    .arrow { font-size:20px; line-height:1; } .kicker { font:11px var(--mono); text-transform:uppercase; color:var(--muted); display:flex; align-items:center; gap:12px; }
+    .kicker::before { content:''; width:7px; height:7px; background:var(--primary); }
+    .topbar { border-bottom:1px solid var(--border); background:var(--background); position:sticky; top:0; z-index:30; }
+    .nav-inner { height:76px; display:flex; align-items:center; justify-content:space-between; gap:20px; }
+    .brand { display:flex; align-items:center; gap:10px; font-size:18px; font-weight:700; } .brand img { width:32px; height:32px; object-fit:contain; }
+    .nav-links { display:flex; gap:30px; font-size:13px; } .nav-links a:hover { color:var(--primary); }
+    .nav-action { display:flex; align-items:center; gap:8px; font:12px var(--mono); } .nav-action svg { width:19px; height:19px; }
+    .hero { padding:54px 0 0; }
+    .hero-meta { display:flex; justify-content:space-between; align-items:center; gap:16px; } .release { font:11px var(--mono); color:var(--muted); }
+    .hero h1 { font-size:104px; font-weight:600; margin:25px 0 18px; }
+    .hero-summary { display:flex; align-items:end; justify-content:space-between; gap:36px; padding-bottom:40px; }
+    .hero-copy { max-width:610px; } .hero-copy h2 { font-size:28px; font-weight:500; margin-bottom:12px; } .hero-copy p { font-size:16px; line-height:1.65; max-width:570px; }
+    .hero-actions { display:flex; flex-direction:column; gap:12px; flex-shrink:0; align-items:stretch; }
+    .hero-actions .text-link { text-align:center; font:12px var(--mono); } .text-link:hover { color:var(--primary); }
+    .compat { border-top:1px solid var(--border); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; gap:16px; padding:14px 0; font:11px var(--mono); color:var(--muted); }
+    .compat b { color:var(--foreground); font-weight:500; }
+    .compiler { padding:30px 0 42px; }
+    .compiler-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:23px; font:11px var(--mono); color:var(--muted); }
+    .diagram { display:grid; grid-template-columns:1fr 48px 1.45fr 48px 1fr; align-items:center; min-width:0; gap:0; }
+    .source-stack { position:relative; display:grid; gap:7px; padding:0 14px 0 0; }
+    .source-file { padding:9px 12px; border:1px solid var(--border); background:var(--surface); font:11px var(--mono); display:flex; align-items:center; gap:10px; }
+    .file-icon { width:12px; height:15px; border:1px solid var(--muted); display:inline-block; flex-shrink:0; }
+    .connector { height:1px; background:var(--border); position:relative; } .connector::after { content:'›'; position:absolute; right:0; top:-16px; font-size:22px; color:var(--muted); }
+    .engine { border:1px solid var(--foreground); border-top:3px solid var(--primary); padding:20px 22px; background:var(--surface); }
+    .engine-title { display:flex; align-items:center; justify-content:space-between; gap:10px; font:13px var(--mono); margin-bottom:18px; } .engine-title span { color:var(--primary); }
+    .engine-steps { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; } .engine-steps span { background:var(--muted-surface); padding:6px 4px; font:10px var(--mono); text-align:center; }
+    .pack { border:1px solid var(--border); padding:18px; background:var(--accent-soft); } .pack-name { font:12px var(--mono); color:var(--accent); margin-bottom:10px; } .pack ul { list-style:none; font:11px var(--mono); color:var(--muted); line-height:1.9; } .pack li::before { content:'↳ '; color:var(--accent); }
+    .diagram-labels { display:grid; grid-template-columns:1fr 1.65fr 1fr; gap:20px; margin-top:13px; font:10px var(--mono); color:var(--muted); } .diagram-labels span:nth-child(2) { text-align:center; } .diagram-labels span:last-child { text-align:right; }
+    .section { padding:80px 0; border-top:1px solid var(--border); }
+    .section-title { display:grid; grid-template-columns:220px 1fr; gap:36px; margin-bottom:40px; } .section-title .kicker { align-self:start; margin-top:9px; } .section-title h2 { max-width:710px; } .section-title p { margin-top:14px; max-width:660px; }
+    .workflow { display:grid; grid-template-columns:repeat(3,1fr); column-gap:40px; row-gap:34px; } .workflow article { border-top:1px solid var(--border); padding-top:20px; }
+    .step-number { font:12px var(--mono); color:var(--primary); display:block; margin-bottom:18px; } .workflow h3 { margin-bottom:10px; } .workflow p { font-size:14px; } .workflow article:last-child { border-top-color:var(--primary); }
+    .gate-line { display:flex; gap:22px; flex-wrap:wrap; margin-top:35px; padding:17px 20px; background:var(--primary-soft); font:11px var(--mono); } .gate-line strong { font-weight:500; color:var(--primary); }
+    .capabilities { display:grid; grid-template-columns:1fr 1fr; gap:0 50px; } .capability { display:grid; grid-template-columns:40px 1fr; gap:15px; border-top:1px solid var(--border); padding:25px 0; }
+    .capability .symbol { color:var(--accent); font:22px var(--mono); } .capability h3 { font-size:18px; margin-bottom:10px; } .capability p { font-size:14px; }
+    .dark { background:var(--inverse); color:var(--inverse-foreground); border-color:var(--inverse-border); } .dark p,.dark .kicker { color:var(--inverse-muted); }
+    .quick-layout { display:grid; grid-template-columns:1fr 1.5fr; gap:60px; } .quick-intro h2 { margin:22px 0 20px; } .quick-intro p { font-size:15px; } .quick-intro a { margin-top:25px; color:var(--inverse-foreground); display:inline-flex; gap:12px; border-bottom:1px solid var(--inverse-border); padding-bottom:5px; font:12px var(--mono); }
+    .shell { min-width:0; border:1px solid var(--inverse-border); border-radius:4px; overflow:hidden; } .shell-bar { border-bottom:1px solid var(--inverse-border); padding:0 14px; display:flex; justify-content:space-between; align-items:center; }
+    .tabs { display:flex; gap:18px; } .tabs button { color:var(--inverse-muted); background:transparent; border:0; border-bottom:2px solid transparent; padding:15px 0; font:11px var(--mono); }
+    .tabs button.on { color:var(--inverse-foreground); border-bottom-color:var(--primary); } .copy { width:32px; height:32px; background:transparent; border:0; color:var(--inverse-muted); display:grid; place-items:center; } .copy svg { width:16px; height:16px; } .copy:hover { color:var(--inverse-foreground); }
+    .shell pre { padding:24px 20px; font-size:11px; line-height:1.9; color:var(--inverse-foreground); overflow:auto; min-height:255px; } [hidden] { display:none !important; } .cm { color:var(--inverse-muted); } .copy-status { font:10px var(--mono); color:var(--inverse-muted); display:block; min-height:18px; padding:0 20px 12px; }
+    .demo-title { display:flex; align-items:end; justify-content:space-between; gap:30px; } .demo-title h2 { margin:20px 0 12px; } .demo-title p { max-width:640px; }
+    .frame { margin-top:34px; border:1px solid var(--border); background:var(--surface); border-radius:4px; overflow:hidden; } .frame-bar { padding:12px 18px; background:var(--muted-surface); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; gap:20px; color:var(--muted); font:10px var(--mono); } .frame iframe { display:block; width:100%; height:780px; border:0; background:var(--surface); }
+    .privacy { font:11px var(--mono); color:var(--muted); margin-top:15px; }
+    .trust { display:grid; grid-template-columns:1fr 1fr; gap:60px; } .trust h3 { font-size:18px; margin-bottom:18px; } .trust ul { list-style:none; } .trust li { padding:12px 0 12px 22px; border-top:1px solid var(--border); font-size:14px; color:var(--muted); position:relative; } .trust li::before { content:'+'; position:absolute; left:0; color:var(--accent); font-family:var(--mono); } .trust .boundaries li::before { content:'↗'; color:var(--primary); }
+    .closing { border-top:1px solid var(--border); padding:55px 0; } .closing .wrap { display:flex; justify-content:space-between; align-items:center; gap:30px; } .closing h2 { font-size:30px; max-width:620px; } .closing p { margin-top:12px; }
+    footer { border-top:1px solid var(--border); padding:26px 0; font:11px var(--mono); color:var(--muted); } footer .wrap { display:flex; justify-content:space-between; gap:25px; } .footer-links { display:flex; flex-wrap:wrap; gap:20px; } footer a:hover { color:var(--primary); }
+    @media (min-width:1400px) { .hero h1 { font-size:112px; } }
+    @media (max-width:1000px) { .hero h1 { font-size:88px; } .section-title { grid-template-columns:165px 1fr; gap:25px; } .quick-layout { gap:35px; } .nav-links { gap:20px; } }
+    @media (max-width:760px) { .wrap { padding:0 22px; } .nav-inner { height:65px; } .nav-links { display:none; } .hero { padding-top:32px; } .hero h1 { font-size:64px; } .hero-summary { display:block; } .hero-copy h2 { font-size:25px; } .hero-actions { flex-direction:row; align-items:center; margin-top:24px; gap:24px; } .release { display:none; } .compat { flex-wrap:wrap; justify-content:start; gap:13px 22px; } .diagram { grid-template-columns:1fr 30px 1.3fr; } .diagram > .connector:nth-of-type(4),.pack { display:none; } .engine { padding:15px 12px; } .engine-steps { grid-template-columns:repeat(2,1fr); } .diagram-labels { grid-template-columns:1fr 1.3fr; } .diagram-labels span:last-child { display:none; } .section { padding:55px 0; } .section-title { display:block; } .section-title .kicker { margin-bottom:20px; } h2 { font-size:30px; } .workflow { grid-template-columns:1fr 1fr; gap:26px; } .capabilities,.trust,.quick-layout { grid-template-columns:1fr; } .capabilities { gap:0; } .trust { gap:35px; } .quick-layout { gap:30px; } .demo-title { display:block; } .demo-title .btn { margin-top:20px; } .frame-bar span:last-child { display:none; } .frame iframe { height:720px; } .closing .wrap { display:block; } .closing .btn { margin-top:24px; } footer .wrap { flex-direction:column; } }
+    @media (max-width:420px) { .hero h1 { font-size:49px; } .hero-copy h2 { font-size:22px; } .hero-copy p { font-size:14px; } .hero-actions { gap:16px; } .btn { padding:11px 14px; } .hero-actions .text-link { font-size:10px; } .workflow { grid-template-columns:1fr; } .source-file { font-size:9px; padding:8px; gap:6px; } .engine-title { font-size:10px; } .engine-steps span { font-size:8px; } .compiler-top { font-size:9px; } .shell pre { font-size:10px; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } *,*::before,*::after { transition:none !important; } }
+  </style>
+</head>
+<body id="top">
+  <nav class="topbar" aria-label="Main navigation"><div class="wrap nav-inner">
+    <a href="#top" class="brand"><img src="https://raw.githubusercontent.com/NANInithin/NANInithin.github.io/main/Assets/77537690.png" alt="">AgentMilieu</a>
+    <div class="nav-links"><a href="#how">Pipeline</a><a href="#features">Capabilities</a><a href="#quickstart">Quickstart</a><a href="#demo">Playground</a></div>
+    <a class="nav-action" href="https://github.com/NANInithin/AgentMilieu" target="_blank" rel="noopener">GitHub <span class="arrow">↗</span></a>
+  </div></nav>
+  <main>
+    <header class="hero"><div class="wrap">
+      <div class="hero-meta"><span class="kicker">Context infrastructure / on-device AI</span><span class="release">OPEN SOURCE · APACHE-2.0</span></div>
+      <h1>AgentMilieu<span style="color:var(--primary)">.</span></h1>
+      <div class="hero-summary">
+        <div class="hero-copy"><h2>Small models. Carefully compiled context.</h2><p>Turn documents into cited, safety-processed context packs that fit your local model. Redact private data, quarantine hostile instructions, and put a human between draft and export.</p></div>
+        <div class="hero-actions"><a class="btn btn-primary" href="#demo">Open playground <span class="arrow">↗</span></a><a href="#quickstart" class="text-link">Build locally <span>↓</span></a></div>
+      </div>
+      <div class="compat"><span>BUILT FOR <b>llama.cpp / GGUF</b></span><span><b>Python 3.10+</b></span><span>LOCAL FILES → <b>OFFLINE</b></span><span>CORE WORKFLOW → <b>NO API KEYS</b></span></div>
+      <div class="compiler" role="img" aria-label="Documents enter the AgentMilieu compiler for redaction, quarantine, budgeting, composition, auditing and review, producing a context pack with citations and hashes.">
+        <div class="compiler-top"><span>THE CONTEXT COMPILER</span><span>DOCUMENTS IN. REVIEWED CONTEXT OUT.</span></div>
+        <div class="diagram">
+          <div class="source-stack"><div class="source-file"><i class="file-icon"></i>research.md</div><div class="source-file"><i class="file-icon"></i>document.pdf</div><div class="source-file"><i class="file-icon"></i>source.url</div></div>
+          <div class="connector"></div>
+          <div class="engine"><div class="engine-title">milieu.compile <span>↗</span></div><div class="engine-steps"><span>redact</span><span>quarantine</span><span>budget</span><span>compose</span><span>audit</span><span>review</span></div></div>
+          <div class="connector"></div>
+          <div class="pack"><div class="pack-name">context-pack /</div><ul><li>cited context</li><li>audit report</li><li>verified hashes</li></ul></div>
+        </div>
+        <div class="diagram-labels"><span>01 / YOUR SOURCES</span><span>02 / COMPILE + APPROVE</span><span>03 / LOCAL MODEL</span></div>
+      </div>
+    </div></header>
+    <section class="section" id="how"><div class="wrap">
+      <div class="section-title"><span class="kicker">01 / The pipeline</span><div><h2>Context is an input.<br>Trust is a process.</h2><p>Small context windows leave little room for noise. Every source passes through six stages before it can reach your model.</p></div></div>
+      <div class="workflow">
+        <article><span class="step-number">01 — INGEST</span><h3>Keep the source.</h3><p>Bring URLs, topics, PDFs and Markdown together. Preserve provenance as documents become chunks.</p></article>
+        <article><span class="step-number">02 — SANITISE</span><h3>Separate signal from risk.</h3><p>Redact PII and secrets. Quarantine suspected prompt injections with a report, rather than silently dropping them.</p></article>
+        <article><span class="step-number">03 — BUDGET</span><h3>Know what fits.</h3><p>Use the GGUF model profile and device RAM to calculate a conservative context and KV-cache budget.</p></article>
+        <article><span class="step-number">04 — COMPOSE</span><h3>Make every token count.</h3><p>Stuff, compress or retrieve with BM25. Keep the citations attached and the pack within budget.</p></article>
+        <article><span class="step-number">05 — AUDIT</span><h3>Leave a paper trail.</h3><p>Inspect the scorecard and safety reports. Generate narrow local FastMCP tools, with optional Scorton checks.</p></article>
+        <article><span class="step-number">06 — REVIEW</span><h3>A human gets the last word.</h3><p>Approve locally or through Notion. Export rechecks approval and the content hash before releasing a pack.</p></article>
+      </div>
+      <div class="gate-line"><span>APPROVED + HASH MATCH → EXPORT</span><strong>PENDING / REJECTED / CHANGED → REFUSED</strong></div>
+    </div></section>
+    <section class="section" id="features"><div class="wrap">
+      <div class="section-title"><span class="kicker">02 / Capabilities</span><div><h2>Less guesswork.<br>More control over the input.</h2></div></div>
+      <div class="capabilities">
+        <article class="capability"><span class="symbol">⌘</span><div><h3>Model &amp; device-aware budgets</h3><p>Read exact GGUF headers from Hugging Face without downloading weights. Account for layers, KV heads, quantisation and available memory.</p></div></article>
+        <article class="capability"><span class="symbol">⊘</span><div><h3>Local heuristic safety</h3><p>Rules process private data and suspicious instructions before composition. Quarantine reports make the decisions inspectable.</p></div></article>
+        <article class="capability"><span class="symbol">↳</span><div><h3>Citations that stay attached</h3><p>Source provenance survives stuffing, compression and BM25 retrieval, so the resulting context remains traceable.</p></div></article>
+        <article class="capability"><span class="symbol">{ }</span><div><h3>Narrow FastMCP tools</h3><p>Generate standalone, local tools for each pack. Give an agent the capability it needs without an unnecessarily broad interface.</p></div></article>
+        <article class="capability"><span class="symbol">✓</span><div><h3>Hash-checked review gates</h3><p>Drafts start as Pending in Notion or a local registry. Approval is checked again on every export, along with the content hash.</p></div></article>
+        <article class="capability"><span class="symbol">&gt;_</span><div><h3>CLI when you want it. UI when you need it.</h3><p>A Typer CLI for scripts and CI; a Gradio app for Sources → Target → Audit → Export. External services are optional.</p></div></article>
+      </div>
+    </div></section>
+    <section class="section dark" id="quickstart"><div class="wrap quick-layout">
+      <div class="quick-intro"><span class="kicker">03 / Quickstart</span><h2>Your files.<br>Your hardware.<br>Your context.</h2><p>Run the compiler locally with no credentials for the core offline workflow. Add ingestion, the web UI and services only when needed.</p><a href="https://github.com/NANInithin/AgentMilieu" target="_blank" rel="noopener">Read the repository docs <span>↗</span></a></div>
+      <div class="shell"><div class="shell-bar"><div class="tabs" role="tablist" aria-label="Quickstart commands"><button class="on" id="tab-install" role="tab" aria-selected="true" aria-controls="pane-install" data-tab="install">01 install</button><button id="tab-build" role="tab" aria-selected="false" aria-controls="pane-build" data-tab="build" tabindex="-1">02 build</button><button id="tab-review" role="tab" aria-selected="false" aria-controls="pane-review" data-tab="review" tabindex="-1">03 review</button></div><button class="copy" type="button" aria-label="Copy commands" title="Copy commands"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="1"/><path d="M16 8V3H3v13h5"/></svg></button></div>
+<pre id="pane-install" role="tabpanel" aria-labelledby="tab-install" data-pane="install"><span class="cm"># clone and install</span>
+git clone https://github.com/NANInithin/AgentMilieu
+cd AgentMilieu
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev,app,services]'
+cp .env.example .env   <span class="cm"># optional</span>
+python app.py          <span class="cm"># http://localhost:7860</span></pre>
+<pre id="pane-build" role="tabpanel" aria-labelledby="tab-build" data-pane="build" hidden><span class="cm"># see what fits on the device</span>
+milieu budget --model Llama-3.2-1B --device phone-6gb
+
+<span class="cm"># compile a pack from local files, offline</span>
+milieu build --file examples \
+  --preset Llama-3.2-1B --device-preset phone-6gb \
+  --purpose 'What works offline?' --offline</pre>
+<pre id="pane-review" role="tabpanel" aria-labelledby="tab-review" data-pane="review" hidden>milieu status PACK_ID
+milieu export PACK_ID --out exports  <span class="cm"># refused: Pending review</span>
+milieu approve PACK_ID               <span class="cm"># after reading the draft</span>
+milieu export PACK_ID --out exports  <span class="cm"># ✓ pack + hashes</span>
+milieu reject PACK_ID                <span class="cm"># future exports refused</span></pre>
+<span class="copy-status" role="status" aria-live="polite"></span></div>
+    </div></section>
+    <section class="section" id="demo"><div class="wrap">
+      <div class="demo-title"><div><span class="kicker">04 / Playground</span><h2>Take the compiler for a spin.</h2><p>The AgentMilieu app, running on Hugging Face Spaces. Use bundled examples or non-sensitive documents to explore the workflow.</p></div><a class="btn" href="https://huggingface.co/spaces/NANI-Nithin/AgentMilieu" target="_blank" rel="noopener">Hugging Face <span class="arrow">↗</span></a></div>
+      <div class="frame"><div class="frame-bar"><span>nani-nithin-agentmilieu.hf.space</span><span>PUBLIC DEMO · MAY TAKE A MOMENT TO WAKE</span></div><iframe src="https://nani-nithin-agentmilieu.hf.space" title="AgentMilieu live demo on Hugging Face Spaces" loading="lazy" allow="clipboard-write"></iframe></div>
+      <p class="privacy">PUBLIC SPACE / Keep sensitive documents on a private deployment.</p>
+    </div></section>
+    <section class="section" id="trust"><div class="wrap">
+      <div class="section-title"><span class="kicker">05 / Trust boundaries</span><div><h2>Safety-processed.<br>Not safety by assumption.</h2><p>Heuristic checks and a review gate are useful layers, not a substitute for production security.</p></div></div>
+      <div class="trust"><div><h3>Built into the workflow</h3><ul><li>Compiler drafts and optional service calls use safety-processed data.</li><li>Every export checks approval status and the content hash.</li><li>Per-session registries keep pack state separate.</li><li>Audit previews render as plain text, not untrusted Markdown.</li><li>Offline mode rejects remote sources and external services.</li></ul></div><div class="boundaries"><h3>Before a production deployment</h3><ul><li>Add authentication. Local approval is a demo workflow, not an authorization boundary.</li><li>Restrict network egress. URL ingestion is not SSRF-hardened.</li><li>Set upload quotas and a retention policy for persistent drafts.</li><li>Deploy privately before processing sensitive documents.</li></ul></div></div>
+    </div></section>
+    <section class="closing"><div class="wrap"><div><h2>Better context starts before the prompt.</h2><p>Open source. Offline-first. Built to run on your terms.</p></div><a class="btn btn-primary" href="https://github.com/NANInithin/AgentMilieu" target="_blank" rel="noopener">Explore the source <span class="arrow">↗</span></a></div></section>
+  </main>
+  <footer><div class="wrap"><span>© <span id="yr">2026</span> AgentMilieu / <a href="https://naninithin.me">Nani Nithin</a> / Apache-2.0</span><div class="footer-links"><a href="https://github.com/NANInithin/AgentMilieu">GitHub ↗</a><a href="https://agentvoca.naninithin.me">AgentVoca ↗</a><a href="https://agentquantix.naninithin.me">AgentQuantix ↗</a></div></div></footer>
+  <script>
+    document.getElementById('yr').textContent = new Date().getFullYear();
+    const tabs = [...document.querySelectorAll('[data-tab]')];
+    const panes = [...document.querySelectorAll('[data-pane]')];
+    const status = document.querySelector('.copy-status');
+    function selectTab(tab) {
+      tabs.forEach(t => { const selected = t === tab; t.classList.toggle('on', selected); t.setAttribute('aria-selected', String(selected)); t.tabIndex = selected ? 0 : -1; });
+      panes.forEach(p => p.hidden = p.dataset.pane !== tab.dataset.tab);
+      status.textContent = '';
+    }
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => selectTab(tab));
+      tab.addEventListener('keydown', e => {
+        let next;
+        if (e.key === 'ArrowRight') next = tabs[(index + 1) % tabs.length];
+        if (e.key === 'ArrowLeft') next = tabs[(index + tabs.length - 1) % tabs.length];
+        if (e.key === 'Home') next = tabs[0];
+        if (e.key === 'End') next = tabs[tabs.length - 1];
+        if (next) { e.preventDefault(); selectTab(next); next.focus(); }
+      });
+    });
+    document.querySelector('.copy').addEventListener('click', async () => {
+      const pane = panes.find(p => !p.hidden);
+      if (!pane) return;
+      try { await navigator.clipboard.writeText(pane.innerText.replace(/\s+#.*$/gm, '')); status.textContent = 'Commands copied.'; }
+      catch { status.textContent = 'Copy unavailable. Select the commands to copy.'; }
+    });
+  </script>
+</body>
+</html>
