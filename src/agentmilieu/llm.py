@@ -45,7 +45,8 @@ def curated_models():
 
 
 def search_models(query, limit=20):
-    if not query.strip():
+    query = query.strip()
+    if not query:
         return []
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")

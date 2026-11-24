@@ -4,6 +4,7 @@ import shutil
 import uuid
 from dataclasses import asdict
 from functools import lru_cache
+from html import escape
 
 import gradio as gr
 
@@ -218,7 +219,7 @@ def _compare_status(session):
 def compare_setup(session):
     repos = llm.curated_models()
     context, cap, repo = 8192, 131072, repos[0]
-    source, file_update = "Recommended", gr.update(choices=[], value=None)
+    source, file_update = "Recommended", gr.update(choices=[], value=None, info="")
     ready = bool(session and session.get("pack_id"))
     if ready:
         pack = _session_pack(session)
@@ -227,11 +228,11 @@ def compare_setup(session):
         target = session.get("target")
         if target:
             repo, repos, source = target["repo"], target["repos"], target["source"]
-            file_update = gr.update(choices=target["files"], value=target["file"])
+            file_update = gr.update(choices=target["files"], value=target["file"], info="")
         cap = model["n_ctx_train"]
     return (_compare_status(session), gr.update(interactive=ready),
             gr.update(value=context, maximum=max(context, cap)),
-            gr.update(choices=repos, value=repo), source,
+            gr.update(choices=repos, value=repo, info=""), source,
             file_update, [], [], "", "", "")
 
 
@@ -246,8 +247,11 @@ def catalog_handler(source, query="", session=None):
         else:
             raise ValueError("Unknown model source")
         preferred = session.get("target", {}).get("repo") if session else None
+        info = ""
+        if source == "Search Hub" and not repos:
+            info = "No matching GGUF repositories." if query.strip() else "Enter a model name or repository ID."
         return gr.update(choices=repos, value=preferred if preferred in repos else
-                         (repos[0] if repos else None))
+                         (repos[0] if repos else None), info=info)
     except Exception as exc:
         raise gr.Error(redact_text(str(exc))[0]) from exc
 
@@ -257,7 +261,8 @@ def files_handler(repo):
         files = llm.gguf_files(repo) if repo else []
         choices = [(f'{f["filename"]} · {f["size"] / 1024**3:.2f} GiB', f["filename"])
                    for f in files]
-        return gr.update(choices=choices, value=files[0]["filename"] if files else None)
+        info = "This repository has no eligible GGUF files." if repo and not files else ""
+        return gr.update(choices=choices, value=files[0]["filename"] if files else None, info=info)
     except Exception as exc:
         raise gr.Error(redact_text(str(exc))[0]) from exc
 
@@ -338,17 +343,22 @@ def _model_picker():
     with gr.Row():
         source = gr.Radio(["My account", "Recommended", "Search Hub"], value="Recommended", label="Source")
         refresh = gr.Button("Refresh")
-        query = gr.Textbox(label="Search Hub")
+        query = gr.Textbox(label="Search Hugging Face", placeholder="Model name or owner/repo", lines=1)
         search = gr.Button("Search Hub")
     repos = llm.curated_models()
-    repo = gr.Dropdown(repos, value=repos[0], label="GGUF repository")
-    file = gr.Dropdown([], label="GGUF file (Q4_K_M preferred)")
+    repo = gr.Dropdown(repos, value=repos[0], label="GGUF repository", filterable=False)
+    file = gr.Dropdown([], label="GGUF file (Q4_K_M preferred)", filterable=False)
     return {"source": source, "refresh": refresh, "query": query, "search": search,
             "repo": repo, "file": file, "repos": gr.State(repos), "files": gr.State([])}
 
 
 def _picker_files(repo):
-    update = files_handler(repo)
+    try:
+        update = files_handler(repo)
+    except gr.Error as exc:
+        gr.Warning(escape(exc.message))
+        update = gr.update(choices=[], value=None,
+                           info="Could not load GGUF files from Hugging Face. Search again to retry.")
     return update, update["choices"]
 
 
@@ -358,21 +368,20 @@ def _wire_model_picker(picker, session, prefix):
         return update, update["choices"]
 
     def select_source(source, query, state):
-        return source, *catalog(source, query, state)
+        repo_update, repos = catalog(source, query, state)
+        return source, repo_update, repos, *_picker_files(repo_update["value"])
 
     file_outputs = [picker["file"], picker["files"]]
+    selection_outputs = [picker["source"], picker["repo"], picker["repos"], *file_outputs]
     picker["source"].input(catalog, [picker["source"], picker["query"], session],
                            [picker["repo"], picker["repos"]], api_name=f"{prefix}_catalog").success(
                            _picker_files, picker["repo"], file_outputs, api_visibility="private")
     picker["refresh"].click(lambda state: select_source("My account", "", state), session,
-                            [picker["source"], picker["repo"], picker["repos"]],
-                            api_visibility="private").success(
-                            _picker_files, picker["repo"], file_outputs, api_visibility="private")
-    for event in (picker["search"].click, picker["query"].submit):
-        event(lambda query, state: select_source("Search Hub", query, state),
-              [picker["query"], session], [picker["source"], picker["repo"], picker["repos"]],
-              api_visibility="private").success(
-              _picker_files, picker["repo"], file_outputs, api_visibility="private")
+                            selection_outputs, api_visibility="private")
+    gr.on([picker["search"].click, picker["query"].submit],
+          lambda query, state: select_source("Search Hub", query, state),
+          [picker["query"], session], selection_outputs,
+          show_progress_on=picker["file"], api_visibility="private")
     picker["repo"].input(_picker_files, picker["repo"], file_outputs, api_name=f"{prefix}_files")
 
 

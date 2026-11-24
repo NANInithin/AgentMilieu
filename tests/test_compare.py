@@ -1,12 +1,13 @@
 import importlib.util
 import sys
-from asyncio import BaseEventLoop
+from asyncio import BaseEventLoop, run
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import gradio as gr
 import pytest
+from gradio.state_holder import SessionState
 
 from agentmilieu import gpu, llm, web
 from agentmilieu.models import MODEL_PRESETS
@@ -62,6 +63,32 @@ def test_catalog_files_and_context(monkeypatch, session):
     monkeypatch.setattr(llm, "gguf_files", Mock(side_effect=RuntimeError("Hub unavailable")))
     with pytest.raises(gr.Error, match="Hub unavailable"):
         web.files_handler("repo")
+
+
+def test_search_submit_recovers_from_file_lookup_failure(monkeypatch):
+    repo, filename = "owner/model-GGUF", "model-Q8_0.gguf"
+    monkeypatch.setattr(llm, "search_models", lambda _: [repo])
+    monkeypatch.setattr(llm, "gguf_files", Mock(side_effect=[
+        TimeoutError("Hub timeout"), [{"filename": filename, "size": 1024**3}],
+    ]))
+    monkeypatch.setattr(gr, "Warning", Mock())
+    demo = web.create_app()
+    search_box = next(b for b in demo.blocks.values()
+                      if isinstance(b, gr.Textbox) and b.label == "Search Hugging Face")
+    submit = next(d["id"] for d in demo.config["dependencies"]
+                  if (search_box._id, "submit") in d["targets"])
+
+    async def search_and_retry():
+        state = SessionState(demo)
+        failed = (await demo.process_api(submit, [repo, None], state=state))["data"]
+        assert failed[1]["value"] == repo
+        assert failed[3]["value"] is None and failed[3]["choices"] == []
+        assert "Could not load GGUF files" in failed[3]["info"]
+
+        retried = (await demo.process_api(submit, [repo, None], state=state))["data"]
+        assert retried[3]["value"] == filename and retried[3]["info"] == ""
+
+    run(search_and_retry())
 
 
 def test_comparison_updates_both_histories_and_uses_safe_pack(monkeypatch, session):
