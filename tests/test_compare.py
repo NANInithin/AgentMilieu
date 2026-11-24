@@ -65,6 +65,15 @@ def test_catalog_files_and_context(monkeypatch, session):
         web.files_handler("repo")
 
 
+def test_repository_name_without_owner_has_actionable_feedback(monkeypatch):
+    lookup = Mock(side_effect=AssertionError("An incomplete repository ID must not be fetched"))
+    monkeypatch.setattr(llm, "gguf_files", lookup)
+    update, choices = web._picker_files("subq-savant-1.4")
+    assert update["value"] is None and choices == []
+    assert "owner/repo" in update["info"] and "Search Hugging Face" in update["info"]
+    lookup.assert_not_called()
+
+
 def test_search_submit_recovers_from_file_lookup_failure(monkeypatch):
     repo, filename = "owner/model-GGUF", "model-Q8_0.gguf"
     monkeypatch.setattr(llm, "search_models", lambda _: [repo])

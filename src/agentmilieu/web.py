@@ -349,6 +349,7 @@ def _model_picker():
         search = gr.Button("Search Hub")
     repos = llm.curated_models()
     repo = gr.Dropdown(repos, value=repos[0], label="GGUF repository",
+                       info="Select a result or enter the full owner/repo ID. Search model names above.",
                        filterable=True, allow_custom_value=True, interactive=True)
     file = gr.Dropdown([], label="GGUF file (Q4_K_M preferred)", filterable=True, interactive=True)
     return {"source": source, "refresh": refresh, "query": query, "search": search,
@@ -356,6 +357,11 @@ def _model_picker():
 
 
 def _picker_files(repo):
+    if repo and "/" not in repo:
+        update = gr.update(choices=[], value=None,
+                           info="Enter the full Hugging Face repository ID (owner/repo), "
+                                "or use Search Hugging Face above to search this model name.")
+        return update, []
     try:
         update = files_handler(repo)
     except gr.Error as exc:
