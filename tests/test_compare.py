@@ -86,7 +86,8 @@ def test_search_submit_recovers_from_file_lookup_failure(monkeypatch):
         assert "Could not load GGUF files" in failed[3]["info"]
 
         retried = (await demo.process_api(submit, [repo, None], state=state))["data"]
-        assert retried[3]["value"] == filename and retried[3]["info"] == ""
+        assert retried[3]["value"] == filename
+        assert "Could not load" not in retried[3]["info"]
 
     run(search_and_retry())
 

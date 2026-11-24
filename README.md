@@ -235,8 +235,9 @@ Optional Space variables/secrets:
 - `MILIEU_HF_AUTHOR`: owner whose GGUF repositories populate **My account**;
   falls back to the automatic `SPACE_AUTHOR_NAME` variable, then `NANI-Nithin`.
 - `HF_TOKEN` (**secret**): Hub read token for private repositories and downloads.
-- `MILIEU_MAX_GGUF_GB`: maximum GGUF size in GiB, default **4**. Large models can
-  exhaust host/GPU RAM even below this cap.
+- `MILIEU_MAX_GGUF_GB`: maximum GGUF size for Compare downloads in GiB, default **4**.
+  Target lists single-file models of all sizes and reads their headers for budgeting.
+  Large models can exhaust host/GPU RAM even below this cap.
 
 Comparison requires a locally cached model or a Hub download, even when the pack
 was built in offline mode. On a hosted Space inference runs on the host, **not** on

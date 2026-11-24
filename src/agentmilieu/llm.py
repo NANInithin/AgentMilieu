@@ -62,14 +62,13 @@ def _max_bytes():
 
 
 def gguf_files(repo):
-    """Return {filename, size} entries, preferred Q4_K_M first; omit split models."""
-    cap = _max_bytes()
+    """List single-file models of any size; enforce the download cap at inference."""
     files = _api().model_info(repo, files_metadata=True).siblings
     result = [{"filename": f.rfilename, "size": f.size} for f in files
               if f.rfilename.lower().endswith(".gguf")
               and "mmproj" not in f.rfilename.lower()
               and not re.search(r"-\d{5}-of-\d{5}", f.rfilename)
-              and f.size is not None and 0 < f.size <= cap]
+              and f.size is not None and f.size > 0]
     return sorted(result, key=lambda f: ("q4_k_m" not in f["filename"].lower(),
                                          f["size"], f["filename"]))
 
@@ -226,10 +225,17 @@ def compare_chat(repo, filename, *, n_ctx, with_system, without_system=NEUTRAL_P
     """
     if n_ctx <= 0 or max_tokens <= 0 or not 0 <= temperature <= 2 or not 0 < top_p <= 1:
         raise ValueError("Invalid context or sampling parameters")
-    if filename not in {f["filename"] for f in gguf_files(repo)}:
-        raise ValueError("GGUF file is missing, oversized, split, or a projector")
+    selected = next((f for f in gguf_files(repo) if f["filename"] == filename), None)
+    if selected is None:
+        raise ValueError("GGUF file is missing, split, or a projector")
+    cap = _max_bytes()
+    if selected["size"] > cap:
+        raise ValueError(f"Selected GGUF is {selected['size'] / 1024**3:.2f} GiB, exceeding "
+                         f"this server's Compare download limit of {cap / 1024**3:g} GiB. "
+                         "Target can still read its header for budgeting. "
+                         "The server owner can adjust MILIEU_MAX_GGUF_GB to run it in Compare.")
     path = hf_hub_download(repo_id=repo, filename=filename, token=os.getenv("HF_TOKEN") or None)
-    if Path(path).stat().st_size > _max_bytes():
+    if Path(path).stat().st_size > cap:
         raise ValueError("Downloaded GGUF exceeds size cap")
     with _LOCK:
         sides = [("with_context", with_system, with_history),

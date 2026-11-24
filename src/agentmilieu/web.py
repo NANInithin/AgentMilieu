@@ -261,7 +261,9 @@ def files_handler(repo):
         files = llm.gguf_files(repo) if repo else []
         choices = [(f'{f["filename"]} · {f["size"] / 1024**3:.2f} GiB', f["filename"])
                    for f in files]
-        info = "This repository has no eligible GGUF files." if repo and not files else ""
+        info = "Single-file models shown. Split models and projectors are excluded." if files else ""
+        if repo and not files:
+            info = "This repository has no eligible single-file GGUF models. Split models and projectors are excluded."
         return gr.update(choices=choices, value=files[0]["filename"] if files else None, info=info)
     except Exception as exc:
         raise gr.Error(redact_text(str(exc))[0]) from exc

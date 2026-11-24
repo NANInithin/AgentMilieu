@@ -46,10 +46,12 @@ def test_catalog(hub, monkeypatch):
     assert llm.search_models("tiny", 4) == ["owner/model"]
     assert hub[-1] == {"search": "tiny", "filter": "gguf", "sort": "downloads", "limit": 4}
     assert llm.search_models(" ") == []
-    assert llm.gguf_files("repo") == [{"filename": "model-Q4_K_M.gguf", "size": 20},
-                                        {"filename": "small.gguf", "size": 10}]
+    expected_files = [{"filename": "model-Q4_K_M.gguf", "size": 20},
+                      {"filename": "small.gguf", "size": 10},
+                      {"filename": "huge.gguf", "size": 5 * 1024**3}]
+    assert llm.gguf_files("repo") == expected_files
     monkeypatch.setenv("MILIEU_MAX_GGUF_GB", str(15 / 1024**3))
-    assert llm.gguf_files("repo") == [{"filename": "small.gguf", "size": 10}]
+    assert llm.gguf_files("repo") == expected_files
     monkeypatch.delenv("SPACE_AUTHOR_NAME")
     monkeypatch.delenv("MILIEU_HF_AUTHOR")
     assert llm.account_models() == ["owner/model"]
@@ -71,7 +73,7 @@ def test_catalog_failure(monkeypatch):
         llm.search_models("x", 0)
     monkeypatch.setenv("MILIEU_MAX_GGUF_GB", "nan")
     with pytest.raises(ValueError):
-        llm.gguf_files("repo")
+        llm._max_bytes()
 
 
 @pytest.fixture
@@ -161,6 +163,16 @@ def test_inference_errors(runtime):
         llm.compare_chat("repo", "mmproj.gguf", **args)
     with pytest.raises(ValueError, match="sampling"):
         llm.compare_chat("repo", "small.gguf", **{**args, "max_tokens": 0})
+
+
+def test_oversized_compare_is_rejected_before_download(hub, monkeypatch):
+    def forbidden_download(**kwargs):
+        pytest.fail("Oversized weights must not be downloaded")
+
+    monkeypatch.setattr(llm, "hf_hub_download", forbidden_download)
+    with pytest.raises(ValueError, match="Compare download limit of 4 GiB"):
+        llm.compare_chat("repo", "huge.gguf", n_ctx=1024, max_tokens=32,
+                         with_system="context", with_history=[], without_history=[])
 
 
 def test_cache_evicts_previous_model(runtime):
