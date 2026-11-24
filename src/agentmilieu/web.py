@@ -346,8 +346,9 @@ def _model_picker():
         query = gr.Textbox(label="Search Hugging Face", placeholder="Model name or owner/repo", lines=1)
         search = gr.Button("Search Hub")
     repos = llm.curated_models()
-    repo = gr.Dropdown(repos, value=repos[0], label="GGUF repository", filterable=False)
-    file = gr.Dropdown([], label="GGUF file (Q4_K_M preferred)", filterable=False)
+    repo = gr.Dropdown(repos, value=repos[0], label="GGUF repository",
+                       filterable=True, allow_custom_value=True, interactive=True)
+    file = gr.Dropdown([], label="GGUF file (Q4_K_M preferred)", filterable=True, interactive=True)
     return {"source": source, "refresh": refresh, "query": query, "search": search,
             "repo": repo, "file": file, "repos": gr.State(repos), "files": gr.State([])}
 
