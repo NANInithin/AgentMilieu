@@ -142,7 +142,7 @@ def create_app(settings=None):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
         if request.url.path.startswith(("/auth/", "/api/", "/app")):
             response.headers["Cache-Control"] = "no-store"
             response.headers["Content-Security-Policy"] = (
@@ -253,12 +253,15 @@ def create_app(settings=None):
             return RedirectResponse(f"/auth/google?desktop={login_id}", 303)
         csrf = secrets.token_urlsafe(32)
         request.session["desktop_confirm"] = {"id": str(login_id), "csrf": csrf}
-        return _auth_page("Connect the Windows app", f"""<p>Signing in as {escape(account["email"])}.</p>
+        response = _auth_page("Connect the Windows app", f"""<p>Signing in as {escape(account["email"])}.</p>
 <p>Only continue if you started sign-in yourself. Enter the six-digit code shown in the Windows app.</p>
 <form action="/auth/desktop/{login_id}" method="post">
 <input type="hidden" name="csrf" value="{csrf}">
 <label>Code<input name="code" pattern="[0-9]{{6}}" inputmode="numeric" autocomplete="off" required></label>
 <button class="primary">Connect Windows app</button></form>""")
+        # A same-origin form submission needs its Origin header for the session check.
+        response.headers["Referrer-Policy"] = "same-origin"
+        return response
 
     @app.post("/auth/desktop/{login_id}")
     async def desktop_approve(login_id: UUID, request: Request, account: SignedIn):
