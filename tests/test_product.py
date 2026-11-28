@@ -89,13 +89,18 @@ def test_oauth_desktop_exchange_and_revocation(setup, monkeypatch):
     assert response.status_code == 303
     assert "HttpOnly" in response.headers.get_list("set-cookie")[0]
     assert "Secure" in response.headers.get_list("set-cookie")[0]
+    assert response.headers["referrer-policy"] == "no-referrer"
     confirmation = client.get(response.headers["location"])
+    assert confirmation.headers["referrer-policy"] == "same-origin"
     csrf = confirmation.text.split('name="csrf" value="')[1].split('"')[0]
     exchange = {"id": start["id"], "secret": start["secret"]}
     assert client.post("/api/auth/desktop/exchange", json=exchange).status_code == 202
-    assert client.post(response.headers["location"], data={"code": start["code"], "csrf": csrf}).status_code == 403
-    approved = client.post(response.headers["location"], data={"code": start["code"], "csrf": csrf},
-                           headers={"Origin": settings.public_url})
+    form = {"code": start["code"], "csrf": csrf}
+    assert client.post(response.headers["location"], data=form).status_code == 403
+    for origin in ("null", "https://other.example"):
+        assert client.post(response.headers["location"], data=form,
+                           headers={"Origin": origin}).status_code == 403
+    approved = client.post(response.headers["location"], data=form, headers={"Origin": settings.public_url})
     assert approved.status_code == 200
     token = client.post("/api/auth/desktop/exchange", json=exchange).json()["token"]
     assert client.post("/api/auth/desktop/exchange", json=exchange).status_code == 202
