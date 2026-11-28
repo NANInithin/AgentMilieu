@@ -1,0 +1,10 @@
+**
+!pyproject.toml
+!LICENSE
+!src/
+!src/**
+!dist/
+!dist/windows/
+!dist/windows/AgentMilieu-Setup.exe
+**/__pycache__
+**/*.pyc

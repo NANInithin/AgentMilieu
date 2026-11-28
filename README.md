@@ -24,6 +24,13 @@ ingestion, heuristic safety, cited stuff/compress/BM25-RAG composition, standalo
 FastMCP generation, transparent audits, Notion/local review, a Typer CLI and Gradio UI.
 External services are optional; no credentials are required for file ingestion or budgeting.
 
+## AgentMilieu web and Windows apps
+
+The [product site](https://agentmilieu.naninithin.me) links to the Windows installer
+and the built-in web workspace. The two apps share Google sign-in, a Mollie wallet,
+a review queue, and approved exports. See the [deployment guide](deploy/README.md)
+for the UpCloud release workflow, configuration, and Windows packaging.
+
 ## Run
 
 ```sh
