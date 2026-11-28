@@ -1,0 +1,80 @@
+name: Deploy staging
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: agentmilieu-upcloud
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: staging
+      url: ${{ vars.PUBLIC_URL }}
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      DEPLOY_HOST: ${{ vars.UPCLOUD_TAILSCALE_HOST }}
+      DEPLOY_USER: ${{ vars.UPCLOUD_SSH_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Validate the current main release
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$DEPLOY_SHA"
+          mapfile -t release < release/release.txt
+          test "${release[0]}" = "$DEPLOY_SHA"
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}@sha256:"
+          [[ "${release[1]#"$prefix"}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$PUBLIC_URL" =~ ^https://[a-zA-Z0-9.-]+$ ]]
+          printf 'DEPLOY_IMAGE=%s\n' "${release[1]}" >> "$GITHUB_ENV"
+      - name: Connect to the UpCloud tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:github-deploy
+          ping: ${{ vars.UPCLOUD_TAILSCALE_HOST }}
+      - name: Deploy and verify staging
+        run: |
+          set -euo pipefail
+          bash scripts/send-upcloud.sh staging "$DEPLOY_SHA" "$DEPLOY_IMAGE"
+          curl -fsS --retry 5 --max-time 15 "$PUBLIC_URL/healthz"
+          curl -fsS --max-time 15 "$PUBLIC_URL/api/config" | jq -e '.google and .mollie'
+          curl -fsSI --max-time 15 "$PUBLIC_URL/downloads/AgentMilieu-Setup.exe" | tr -d '\r' | rg -qi '^content-disposition: attachment;.*AgentMilieu-Setup\.exe'
+          printf 'Staging verified commit %s\n' "$DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staged-release-${{ github.event.workflow_run.head_sha }}
+          path: release/release.txt
+          if-no-files-found: error
+          retention-days: 30

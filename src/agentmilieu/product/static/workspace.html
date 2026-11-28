@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context workspace | AgentMilieu</title>
+<link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/app.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <a class="wordmark" href="/">AgentMilieu<span>.</span></a>
+  <div class="bar-actions">
+    <a href="/downloads/AgentMilieu-Setup.exe" class="quiet">Download for Windows</a>
+    <button type="button" class="wallet-toggle" id="wallet-toggle" hidden>Wallet <strong id="balance"></strong></button>
+    <button type="button" class="quiet" id="logout" hidden>Sign out</button>
+  </div>
+</header>
+<main class="layout">
+  <div class="intro">
+    <div><span class="eyebrow">Context compiler</span><h1>Your workspace</h1>
+      <p id="account-label">Generate cited context packs for your local models.</p></div>
+    <div class="price"><strong id="price">€0.499</strong><span>per generation</span></div>
+  </div>
+  <p id="flash" class="notice" role="status" hidden></p>
+  <section id="signin" class="panel sign-in" hidden>
+    <h2>Build your first context pack</h2>
+    <p>Sign in with Google to create your account, fund your wallet, and save your packs for review.</p>
+    <a id="google" class="primary" href="/auth/google">Continue with Google</a>
+  </section>
+  <div id="account-content" hidden>
+    <section id="wallet" class="panel wallet-panel" hidden aria-labelledby="wallet-title">
+      <header class="panel-heading"><div><h2 id="wallet-title">Wallet</h2><p>Current balance <strong id="wallet-balance"></strong></p></div>
+        <button type="button" id="wallet-refresh">Refresh balance</button></header>
+      <div id="topup-buttons" class="actions"></div>
+      <p id="mollie-status" class="muted">Top-ups are processed by Mollie.</p>
+      <div class="wallet-activity">
+        <div><h3>Recent activity</h3><ul id="transactions" class="list"></ul></div>
+        <div><h3>Top-ups</h3><ul id="topups" class="list"></ul></div>
+      </div>
+    </section>
+    <div class="columns">
+      <section class="panel" aria-labelledby="new-title">
+        <header class="panel-heading"><div><h2 id="new-title">New context pack</h2><p>Choose sources, a target model, and a device budget.</p></div></header>
+        <form id="generator">
+          <label>Pack name<input name="name" required maxlength="120" placeholder="Product documentation"></label>
+          <label>Purpose <span class="optional">Optional</span><input name="purpose" maxlength="2000" placeholder="What should the model answer?"></label>
+          <fieldset>
+            <legend>Sources</legend>
+            <label>Files<input id="files" type="file" name="files" multiple accept=".txt,.md,.html,.htm,.csv,.pdf,.docx,.xlsx,.pptx"></label>
+            <p class="hint">Up to 8 files, 12 MiB total. Files are processed on the AgentMilieu server.</p>
+            <label>Paste text<textarea name="text" rows="4" maxlength="300000" placeholder="Add notes or excerpts"></textarea></label>
+            <label>Public HTTPS links <span class="optional">One per line</span><textarea name="urls" rows="2" maxlength="10245" placeholder="https://example.com/docs"></textarea></label>
+          </fieldset>
+          <fieldset>
+            <legend>Target model and device</legend>
+            <label>Model<select name="preset" id="presets"></select></label>
+            <div id="hub-fields" class="pair" hidden>
+              <label>Hugging Face repository<input name="hf_repo" maxlength="180" placeholder="owner/model-GGUF"></label>
+              <label>GGUF filename<input name="hf_file" maxlength="250" placeholder="model-Q4_K_M.gguf"></label>
+            </div>
+            <p class="hint">Enter the available memory on the device that will run your GGUF.</p>
+            <label>Device label<input name="device_name" maxlength="120" value="Manual device"></label>
+            <div class="pair">
+              <label>Total memory (GiB)<input name="total_gib" type="number" min="0.01" step="any" value="8" required></label>
+              <label>Available memory (GiB)<input name="available_gib" type="number" min="0.01" step="any" value="6" required></label>
+            </div>
+            <div class="pair">
+              <label>Maximum context<input name="max_context" type="number" min="512" max="262144" value="8192" required></label>
+              <label>KV cache<select name="kv_type"><option>f16</option><option>q8_0</option><option>q4_0</option></select></label>
+            </div>
+            <button type="button" id="budget-preview">Estimate memory budget</button>
+            <pre id="budget-result" hidden></pre>
+          </fieldset>
+          <fieldset>
+            <legend>Composition</legend>
+            <div class="pair">
+              <label>Strategy<select name="strategy"><option value="auto">Automatic</option><option value="stuff">Include full chunks</option><option value="compress">Compress</option><option value="rag">Retrieval (BM25)</option></select></label>
+              <label>Compression provider<select name="provider" id="provider"><option value="none">Extractive</option><option value="managed">AgentMilieu managed</option><option value="openai">OpenAI-compatible</option><option value="anthropic">Anthropic-compatible</option></select></label>
+            </div>
+            <div id="provider-fields" hidden>
+              <label>API base URL <span class="optional">Optional</span><input name="provider_url" type="url" maxlength="500" placeholder="https://api.openai.com/v1"></label>
+              <div class="pair">
+                <label>API model<input name="provider_model" maxlength="128" placeholder="Provider model ID"></label>
+                <label>API key<input name="provider_key" type="password" maxlength="1024" autocomplete="off"></label>
+              </div>
+            </div>
+            <p class="hint">When compressing several chunks, AgentMilieu sends selected redacted text to the chosen provider. Your API key is used for the request and stays out of saved packs.</p>
+          </fieldset>
+          <div class="submit-row"><button type="submit" class="primary" id="generate">Generate context pack</button><span id="generation-price">€0.499 · failed runs are credited</span></div>
+        </form>
+      </section>
+      <div class="side">
+        <section class="panel" aria-labelledby="history-title">
+          <header class="panel-heading"><div><h2 id="history-title">Pack history</h2><p>Open a draft or return to a previous review.</p></div></header>
+          <ul id="history" class="list history"></ul>
+          <button type="button" id="more" hidden>Show more</button>
+        </section>
+        <section id="review" class="panel review" hidden aria-labelledby="review-title" tabindex="-1">
+          <header class="panel-heading"><div><span id="review-status" class="state"></span><h2 id="review-title"></h2><p id="review-meta"></p></div></header>
+          <p class="hint hash">Pack hash <code id="pack-hash"></code></p>
+          <details open><summary>Compiled context</summary><pre id="context"></pre></details>
+          <details><summary>Audit report</summary><pre id="audit"></pre></details>
+          <details><summary>Memory &amp; token budget</summary><pre id="budget"></pre></details>
+          <div class="actions review-actions">
+            <button type="button" id="approve" class="primary">Approve</button>
+            <button type="button" id="reject">Reject</button>
+            <a id="export" class="button" hidden>Download ZIP</a>
+          </div>
+          <details class="notion">
+            <summary>Review in Notion</summary>
+            <p class="hint">Send a copy to a shared Notion database, then import its decision. The integration token is used only for the request.</p>
+            <label>Integration token<input id="notion-token" type="password" maxlength="500" autocomplete="off"></label>
+            <label>Database ID<input id="notion-db" maxlength="36" placeholder="Notion database UUID"></label>
+            <div class="actions"><button type="button" id="notion-publish">Send to Notion</button>
+              <button type="button" id="notion-import" hidden>Import decision</button><a id="notion-page" target="_blank" rel="noopener" hidden>Open Notion page</a></div>
+          </details>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+</body>
+</html>

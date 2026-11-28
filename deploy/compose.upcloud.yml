@@ -1,0 +1,12 @@
+services:
+  app:
+    networks:
+      default: {}
+      edge:
+        aliases:
+          - "${COMPOSE_PROJECT_NAME}-app"
+
+networks:
+  edge:
+    external: true
+    name: agentkeireki-edge

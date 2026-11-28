@@ -16,6 +16,10 @@ ingest = ["pypdf", "python-docx", "openpyxl", "python-pptx"]
 tokenizers = ["tokenizers>=0.20"]
 services = ["context.dev", "notion-client", "mistralai>=1,<2"]
 app = ["gradio==6.32.0", "pypdf", "python-docx", "openpyxl", "python-pptx", "pydantic"]
+product = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "psycopg[binary]>=3.2,<4", "google-auth>=2.40,<3", "itsdangerous>=2.2,<3", "python-multipart>=0.0.26,<1", "urllib3>=2.5,<3", "notion-client>=2,<4", "pypdf", "python-docx", "openpyxl", "python-pptx"]
+
+[tool.setuptools.package-data]
+"agentmilieu.product" = ["schema.sql", "static/*"]
 
 [project.scripts]
 milieu = "agentmilieu.cli:app"

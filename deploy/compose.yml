@@ -1,0 +1,44 @@
+services:
+  app:
+    image: ${AGENTMILIEU_IMAGE:?Set AGENTMILIEU_IMAGE}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      MOLLIE_API_KEY: ${MOLLIE_API_KEY:-}
+      MANAGED_PROVIDER_KIND: ${MANAGED_PROVIDER_KIND:-openai}
+      MANAGED_PROVIDER_URL: ${MANAGED_PROVIDER_URL:-}
+      MANAGED_PROVIDER_MODEL: ${MANAGED_PROVIDER_MODEL:-}
+      MANAGED_PROVIDER_KEY: ${MANAGED_PROVIDER_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=384m,mode=1777
+    stop_grace_period: 100s
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: agentmilieu
+      POSTGRES_USER: agentmilieu
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD, pg_isready, -U, agentmilieu, -d, agentmilieu]
+      interval: 4s
+      timeout: 4s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  postgres:

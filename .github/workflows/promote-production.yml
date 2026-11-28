@@ -1,0 +1,85 @@
+name: Promote production
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full commit SHA shown in the successful staging deployment
+        required: true
+        type: string
+      confirm:
+        description: Type deploy-production to confirm
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: agentmilieu-upcloud
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: production
+      url: https://agentmilieu.naninithin.me
+    env:
+      DEPLOY_SHA: ${{ inputs.sha }}
+      DEPLOY_CONFIRM: ${{ inputs.confirm }}
+      DEPLOY_HOST: ${{ vars.UPCLOUD_TAILSCALE_HOST }}
+      DEPLOY_USER: ${{ vars.UPCLOUD_SSH_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify the commit and find its completed staging deployment
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$DEPLOY_CONFIRM" = deploy-production
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$DEPLOY_SHA"
+          name="staged-release-$DEPLOY_SHA"
+          workflow_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-staging.yml" --jq .id)"
+          runs="$(gh api --paginate --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" \
+            -f name="$name" --jq '.artifacts[] | select(.expired == false) | .workflow_run.id')"
+          for run in $runs; do
+            [[ "$run" =~ ^[0-9]+$ ]] || continue
+            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" | jq -e --argjson id "$workflow_id" \
+              '.workflow_id == $id and .event == "workflow_run" and .conclusion == "success"' > /dev/null; then
+              gh run download "$run" --repo "$GITHUB_REPOSITORY" --name "$name" --dir release
+              break
+            fi
+          done
+          test -f release/release.txt
+          mapfile -t release < release/release.txt
+          test "${release[0]}" = "$DEPLOY_SHA"
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}@sha256:"
+          [[ "${release[1]#"$prefix"}" =~ ^[0-9a-f]{64}$ ]]
+          printf 'DEPLOY_IMAGE=%s\n' "${release[1]}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+          path: source
+      - name: Connect to the UpCloud tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:github-deploy
+          ping: ${{ vars.UPCLOUD_TAILSCALE_HOST }}
+      - name: Promote and verify production
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+          bash scripts/send-upcloud.sh production "$DEPLOY_SHA" "$DEPLOY_IMAGE"
+          curl -fsS --retry 5 --max-time 15 https://agentmilieu.naninithin.me/healthz
+          curl -fsS --max-time 15 https://agentmilieu.naninithin.me/api/config | jq -e '.google and .mollie'
+          curl -fsSI --max-time 15 https://agentmilieu.naninithin.me/downloads/AgentMilieu-Setup.exe | tr -d '\r' | rg -qi '^content-disposition: attachment;.*AgentMilieu-Setup\.exe'
