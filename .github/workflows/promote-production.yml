@@ -82,4 +82,4 @@ jobs:
           bash scripts/send-upcloud.sh production "$DEPLOY_SHA" "$DEPLOY_IMAGE"
           curl -fsS --retry 5 --max-time 15 https://agentmilieu.naninithin.me/healthz
           curl -fsS --max-time 15 https://agentmilieu.naninithin.me/api/config | jq -e '.google and .mollie'
-          curl -fsSI --max-time 15 https://agentmilieu.naninithin.me/downloads/AgentMilieu-Setup.exe | tr -d '\r' | rg -qi '^content-disposition: attachment;.*AgentMilieu-Setup\.exe'
+          curl -fsSI --max-time 15 https://agentmilieu.naninithin.me/downloads/AgentMilieu-Setup.exe | grep -Ei '^content-disposition: attachment;.*AgentMilieu-Setup\.exe' >/dev/null

@@ -70,7 +70,7 @@ jobs:
           bash scripts/send-upcloud.sh staging "$DEPLOY_SHA" "$DEPLOY_IMAGE"
           curl -fsS --retry 5 --max-time 15 "$PUBLIC_URL/healthz"
           curl -fsS --max-time 15 "$PUBLIC_URL/api/config" | jq -e '.google and .mollie'
-          curl -fsSI --max-time 15 "$PUBLIC_URL/downloads/AgentMilieu-Setup.exe" | tr -d '\r' | rg -qi '^content-disposition: attachment;.*AgentMilieu-Setup\.exe'
+          curl -fsSI --max-time 15 "$PUBLIC_URL/downloads/AgentMilieu-Setup.exe" | grep -Ei '^content-disposition: attachment;.*AgentMilieu-Setup\.exe' >/dev/null
           printf 'Staging verified commit %s\n' "$DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
