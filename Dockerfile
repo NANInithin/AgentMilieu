@@ -1,16 +1,8 @@
-FROM node:22-alpine AS website
-WORKDIR /build
-COPY website/package*.json ./
-RUN npm ci
-COPY website/index.html website/build.mjs ./
-RUN npm run build
-
 FROM python:3.12-slim AS development
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/tmp HF_HOME=/tmp/hf
 WORKDIR /app
 COPY pyproject.toml LICENSE ./
 COPY src/ ./src/
-COPY --from=website --chmod=0644 /build/dist/index.html ./src/agentmilieu/product/static/index.html
 RUN pip install --no-cache-dir '.[product]' \
     && useradd --uid 10001 --no-create-home app \
     && mkdir -m 0755 /app/downloads

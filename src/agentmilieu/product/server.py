@@ -178,10 +178,7 @@ def create_app(settings=None):
 
     @app.get("/")
     def landing():
-        path = STATIC / "index.html"
-        if not path.is_file():
-            path = Path(__file__).resolve().parents[3] / "website" / "index.html"
-        return FileResponse(path)
+        return FileResponse(STATIC / "index.html")
 
     @app.get("/healthz")
     def health():

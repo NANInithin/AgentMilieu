@@ -5,6 +5,7 @@ on:
     branches: [main, website/landing-page]
     paths:
       - "website/**"
+      - "src/agentmilieu/product/static/index.html"
       - ".github/workflows/website.yml"
   # Always report the check, including product-only PRs.
   pull_request:
