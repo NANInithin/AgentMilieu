@@ -9,7 +9,7 @@ Unicode true
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentMilieu"
 
 Name "AgentMilieu ${APP_VERSION}"
-OutFile "../dist/windows/AgentMilieu-Setup.exe"
+OutFile "..\dist\windows\AgentMilieu-Setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\AgentMilieu"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
@@ -42,8 +42,8 @@ FunctionEnd
 Section "AgentMilieu"
     SetShellVarContext current
     SetOutPath "$INSTDIR"
-    File /r "../dist/AgentMilieu/*"
-    File "../LICENSE"
+    File /r "..\dist\AgentMilieu\*"
+    File "..\LICENSE"
     WriteUninstaller "$INSTDIR\Uninstall.exe"
     CreateShortcut "$SMPROGRAMS\AgentMilieu.lnk" "$INSTDIR\AgentMilieu.exe"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "AgentMilieu"
