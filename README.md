@@ -31,6 +31,10 @@ and the built-in web workspace. The two apps share Google sign-in, a Mollie wall
 a review queue, and approved exports. See the [deployment guide](deploy/README.md)
 for the UpCloud release workflow, configuration, and Windows packaging.
 
+The Windows app can select local files and probe your machine offline. Connect for
+Google sign-in, wallet access, paid generation, and downloading approved packs.
+Save the approved ZIP before going offline to use its context with a local model.
+
 ## Run
 
 ```sh
