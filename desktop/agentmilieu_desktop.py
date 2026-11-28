@@ -45,17 +45,24 @@ class Api:
             response = requests.request(method, self.server + path, headers=headers,
                                         timeout=(5, timeout), allow_redirects=False, **kwargs)
         except requests.RequestException as exc:
-            raise ApiError("Could not reach AgentMilieu. Check your connection and try again.", 0) from exc
+            raise ApiError("Could not reach AgentMilieu. Check your internet connection and try again.", 0) from exc
         if response.status_code == 204:
             return None
         if not 200 <= response.status_code < 300:
             try:
-                message = response.json().get("detail")
+                body = response.json()
             except ValueError:
-                message = None
-            raise ApiError(message if isinstance(message, str) else "The AgentMilieu request failed.",
-                           response.status_code)
-        return response.content if raw else response.json()
+                body = None
+            detail = body.get("detail") if isinstance(body, dict) else None
+            message = detail if isinstance(detail, str) else f"AgentMilieu returned HTTP {response.status_code}."
+            raise ApiError(message, response.status_code)
+        if raw:
+            return response.content
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ApiError(f"AgentMilieu returned an unexpected response (HTTP {response.status_code}).",
+                           response.status_code) from exc
 
 
 def stored_token(server, token=None):
@@ -127,7 +134,7 @@ class Desktop:
         self.generate_busy = False
         self.settings = {"price_mills": 499, "topups": [5, 10, 20], "managed_provider": False, "mollie": False}
         self.vars = {}
-        self.status = tk.StringVar(value="Set up your sources and device. Sign in when you’re ready to generate.")
+        self.status = tk.StringVar(value="Choose your sources and target device.")
         self.identity = tk.StringVar(value="Guest")
         self.balance = tk.StringVar(value="Wallet unavailable until sign-in")
         self.probe_status = tk.StringVar()
@@ -242,6 +249,8 @@ class Desktop:
                   wraplength=620).pack(anchor="w", pady=(5, 0))
         self.generate = ttk.Button(parent, text="Generate context pack · €0.499", command=self.submit, state="disabled")
         self.generate.pack(anchor="w", pady=6)
+        ttk.Label(parent, text="Connect to the internet and sign in to generate a pack. "
+                  "You can choose files and probe this machine offline.", wraplength=620).pack(anchor="w")
         self.toggle_fields()
 
     def build_review(self, parent):
@@ -376,11 +385,16 @@ class Desktop:
         self.login_version += 1
         version = self.login_version
         self.signin_button.configure(state="disabled")
+        self.status.set("Connecting to AgentMilieu for Google sign-in…")
         self.work(lambda: self.api.request("/api/auth/desktop/start", "POST"),
                   lambda flow: self.open_login(flow, version), self.login_failed)
 
     def login_failed(self, error):
         self.signin_button.configure(text="Continue with Google", command=self.signin, state="normal")
+        if isinstance(error, ApiError) and error.status == 0:
+            self.status.set("Could not reach AgentMilieu for Google sign-in. "
+                            "Reconnect to the internet and try again. Machine probing still works offline.")
+            return
         self.show_error(error)
 
     def cancel_login(self):
@@ -407,6 +421,7 @@ class Desktop:
             if version == self.login_version:
                 self.api.token = token
                 stored_token(self.api.server, token)
+                self.work(self.load_config, self.set_config)
                 self.work(self.load_account, self.set_account, self.login_failed)
 
         def failed(error):
