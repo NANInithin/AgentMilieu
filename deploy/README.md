@@ -18,8 +18,9 @@ database and credentials.
      /opt/agentmilieu/staging /opt/agentmilieu/production
    ```
 
-2. Copy [the environment template](product.env.example) to `.env` in each
-   directory and restrict access to the deploy user with mode `0600`. Generate a
+2. Copy the [root environment template](../.env.example) or the
+   [deployment-only template](product.env.example) to `.env` in each directory
+   and restrict access to the deploy user with mode `0600`. Generate a
    different PostgreSQL password and at least 32 random characters for
    `SESSION_SECRET` for each environment. Populate `DATABASE_URL` with the same
    PostgreSQL password. Leave both PostgreSQL instances inside their Compose networks.
